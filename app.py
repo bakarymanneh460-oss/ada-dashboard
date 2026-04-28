@@ -3,26 +3,31 @@ import pandas as pd
 import requests
 import os
 from datetime import datetime
-from spellchecker import SpellChecker
+
+# Safe spellchecker (won’t crash)
+try:
+    from spellchecker import SpellChecker
+    spell = SpellChecker()
+except:
+    spell = None
 
 # ==============================
-# 🔐 CONFIG (FROM SECRETS)
+# 🔐 CONFIG
 # ==============================
 KOBO_TOKEN = os.getenv("KOBO_TOKEN")
 FORM_UID = "aQJmYa6Z9mJ5qwdw8RrQcj"
 
 # ==============================
-# 🎨 PAGE CONFIG
+# PAGE CONFIG
 # ==============================
 st.set_page_config(page_title="ADA Dashboard", layout="wide")
 
 # ==============================
-# 🎨 STYLE
+# STYLE
 # ==============================
 st.markdown("""
 <style>
 body {background-color:#f5f7fb;}
-
 .card {
     background:white;
     padding:18px;
@@ -30,10 +35,8 @@ body {background-color:#f5f7fb;}
     box-shadow:0 3px 10px rgba(0,0,0,0.05);
     text-align:center;
 }
-
 .title {font-size:13px;color:gray;}
 .value {font-size:28px;font-weight:bold;}
-
 .green {color:#16a34a;}
 .red {color:#dc2626;}
 .orange {color:#f59e0b;}
@@ -41,7 +44,7 @@ body {background-color:#f5f7fb;}
 """, unsafe_allow_html=True)
 
 # ==============================
-# 📌 SIDEBAR
+# SIDEBAR
 # ==============================
 st.sidebar.markdown("""
 <div style='background:#2563eb;padding:12px;border-radius:10px;text-align:center'>
@@ -49,51 +52,23 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Dashboard", "Data Explorer", "Downloads"])
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("Project Info")
-st.sidebar.write("Form UID:", FORM_UID)
+page = st.sidebar.radio("Navigation", ["Dashboard", "Data Explorer", "Downloads"])
 
 if st.sidebar.button("🔄 Refresh Data"):
     st.rerun()
 
-st.sidebar.markdown("---")
-st.sidebar.caption("ADA System v1.0")
-
 # ==============================
-# 🌍 SPELL CHECK
+# TEXT CLEANING
 # ==============================
-spell = SpellChecker()
-
-CUSTOM_DICT = {
-    "tdk": "tidak",
-    "yg": "yang",
-    "dr": "dari",
-    "krn": "karena",
-    "utk": "untuk",
-    "dapt": "dapat"
-}
-
 def correct_text(text):
     if not isinstance(text, str):
         return text
-
-    words = text.split()
-    corrected = []
-
-    for w in words:
-        lw = w.lower()
-        if lw in CUSTOM_DICT:
-            corrected.append(CUSTOM_DICT[lw])
-        else:
-            corrected.append(spell.correction(w) or w)
-
-    return " ".join(corrected)
+    if spell is None:
+        return text
+    return " ".join([spell.correction(w) or w for w in text.split()])
 
 # ==============================
-# 🔢 NUMERIC VALIDATION
+# NUMERIC CHECK
 # ==============================
 def validate_numeric(row):
     errors = []
@@ -101,22 +76,18 @@ def validate_numeric(row):
         if "quantity" in row and "price" in row:
             q = float(row["quantity"])
             p = float(row["price"])
-
             if q > 0:
-                unit_price = p / q
-
-                if unit_price < 1000:
-                    errors.append("price_too_low")
-                elif unit_price > 50000:
-                    errors.append("price_too_high")
-
+                unit = p / q
+                if unit < 1000:
+                    errors.append("price_low")
+                elif unit > 50000:
+                    errors.append("price_high")
     except:
         errors.append("numeric_error")
-
     return errors
 
 # ==============================
-# 🌐 FETCH DATA (FIXED ENDPOINT)
+# FETCH DATA (FINAL FIX)
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data():
@@ -131,10 +102,13 @@ def fetch_data():
     }
 
     try:
-        res = requests.get(url, headers=headers)
+        with st.spinner("⏳ Fetching data from Kobo..."):
+            res = requests.get(url, headers=headers, timeout=20)
 
         if res.status_code == 200:
-            return pd.DataFrame(res.json().get("results", []))
+            data = res.json().get("results", [])
+            st.success(f"✅ Loaded {len(data)} records")
+            return pd.DataFrame(data)
 
         elif res.status_code == 401:
             st.error("❌ Invalid Kobo Token")
@@ -143,13 +117,15 @@ def fetch_data():
         else:
             st.error(f"❌ API Error: {res.status_code}")
 
+    except requests.exceptions.Timeout:
+        st.error("❌ Request timed out")
     except Exception as e:
-        st.error(f"❌ Connection error: {e}")
+        st.error(f"❌ Error: {e}")
 
     return pd.DataFrame()
 
 # ==============================
-# 📥 LOAD DATA
+# LOAD DATA
 # ==============================
 df = fetch_data()
 
@@ -158,9 +134,9 @@ if df.empty:
     st.stop()
 
 # ==============================
-# 🧹 CLEAN DATA
+# CLEAN
 # ==============================
-clean_data, flagged_data = [], []
+clean, flagged = [], []
 
 for _, row in df.iterrows():
     row = row.to_dict()
@@ -174,58 +150,46 @@ for _, row in df.iterrows():
 
     if errors:
         row["errors"] = ", ".join(errors)
-        flagged_data.append(row)
+        flagged.append(row)
     else:
-        clean_data.append(row)
+        clean.append(row)
 
-clean_df = pd.DataFrame(clean_data)
-flag_df = pd.DataFrame(flagged_data)
+clean_df = pd.DataFrame(clean)
+flag_df = pd.DataFrame(flagged)
 
 # ==============================
-# 📊 KPI
+# KPI
 # ==============================
 total = len(df)
 valid = len(clean_df)
-flagged = len(flag_df)
-score = (valid / total) * 100 if total > 0 else 0
+bad = len(flag_df)
+score = (valid / total) * 100 if total else 0
 
 # ==============================
-# 📄 DASHBOARD
+# DASHBOARD
 # ==============================
 if page == "Dashboard":
-
-    st.title("📊 ADA Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
 
     c1.markdown(f"<div class='card'><div class='title'>Total</div><div class='value'>{total}</div></div>", unsafe_allow_html=True)
     c2.markdown(f"<div class='card'><div class='title'>Valid</div><div class='value green'>{valid}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='card'><div class='title'>Flagged</div><div class='value red'>{flagged}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='card'><div class='title'>Flagged</div><div class='value red'>{bad}</div></div>", unsafe_allow_html=True)
 
     color = "green" if score > 85 else "orange" if score > 60 else "red"
     c4.markdown(f"<div class='card'><div class='title'>Quality</div><div class='value {color}'>{score:.1f}%</div></div>", unsafe_allow_html=True)
 
-    st.subheader("📊 Data Quality Overview")
-    chart = pd.DataFrame({
-        "Type": ["Valid", "Flagged"],
-        "Count": [valid, flagged]
-    })
-    st.bar_chart(chart.set_index("Type"))
-
-    st.subheader("🚨 Status")
-    if flagged > 0:
-        st.error(f"{flagged} records need attention")
-    else:
-        st.success("All data is clean")
+    st.bar_chart(pd.DataFrame({
+        "Valid": [valid],
+        "Flagged": [bad]
+    }))
 
 # ==============================
-# 📄 DATA EXPLORER
+# DATA
 # ==============================
 elif page == "Data Explorer":
 
-    st.title("📋 Data Explorer")
-
-    t1, t2 = st.tabs(["Clean Data", "Flagged Data"])
+    t1, t2 = st.tabs(["Clean", "Flagged"])
 
     with t1:
         st.dataframe(clean_df, use_container_width=True)
@@ -234,16 +198,14 @@ elif page == "Data Explorer":
         st.dataframe(flag_df, use_container_width=True)
 
 # ==============================
-# 📄 DOWNLOADS
+# DOWNLOAD
 # ==============================
 elif page == "Downloads":
 
-    st.title("⬇ Download Data")
-
-    st.download_button("Download Clean Data", clean_df.to_csv(index=False), "clean.csv")
-    st.download_button("Download Flagged Data", flag_df.to_csv(index=False), "flagged.csv")
+    st.download_button("Download Clean", clean_df.to_csv(index=False), "clean.csv")
+    st.download_button("Download Flagged", flag_df.to_csv(index=False), "flagged.csv")
 
 # ==============================
-# 🕒 FOOTER
+# FOOTER
 # ==============================
 st.caption(f"Last updated: {datetime.now()}")
