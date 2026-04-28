@@ -98,7 +98,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# FILTERS (UPDATED START–END)
+# FILTERS (START–END)
 # ==============================
 st.sidebar.markdown("### Filters")
 
@@ -106,20 +106,13 @@ if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
 
     st.sidebar.markdown("### Date Range")
-
     col1, col2 = st.sidebar.columns(2)
 
     with col1:
-        start_date = st.date_input(
-            "Start",
-            value=df["_submission_time"].min()
-        )
+        start_date = st.date_input("Start", value=df["_submission_time"].min())
 
     with col2:
-        end_date = st.date_input(
-            "End",
-            value=df["_submission_time"].max()
-        )
+        end_date = st.date_input("End", value=df["_submission_time"].max())
 
     df = df[
         (df["_submission_time"] >= pd.to_datetime(start_date)) &
@@ -161,6 +154,7 @@ for idx, row in df.iterrows():
     r = row.to_dict()
     errors = []
 
+    # Example validation (only if fields exist)
     if "quantity" in df.columns and "price" in df.columns:
         try:
             q = float(r.get("quantity", 0))
@@ -177,10 +171,12 @@ for idx, row in df.iterrows():
         except:
             pass
 
+    # Duplicate check
     if len(duplicate_indices) < len(df) * 0.5:
         if idx in duplicate_indices:
             errors.append("duplicate")
 
+    # Extreme values
     for col in numeric_cols:
         try:
             val = float(r.get(col, 0))
@@ -220,16 +216,29 @@ if page == "Dashboard":
     st.subheader("Validation Overview")
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
+    # ==========================
+    # ENUMERATOR PERFORMANCE (FIXED)
+    # ==========================
     if enum_col:
         st.subheader("Enumerator Performance")
 
         perf = df.groupby(enum_col).size().reset_index(name="submissions")
 
-        if not flag_df.empty:
+        if not flag_df.empty and enum_col in flag_df.columns:
             flag_counts = flag_df.groupby(enum_col).size().reset_index(name="flags")
-            perf = perf.merge(flag_counts, on=enum_col, how="left").fillna(0)
+            perf = perf.merge(flag_counts, on=enum_col, how="left")
+        else:
+            perf["flags"] = 0
 
-        perf["quality_score"] = 100 - (perf["flags"] / perf["submissions"] * 100)
+        if "flags" not in perf.columns:
+            perf["flags"] = 0
+
+        perf["flags"] = perf["flags"].fillna(0)
+
+        perf["quality_score"] = perf.apply(
+            lambda x: 100 if x["submissions"] == 0 else 100 - (x["flags"] / x["submissions"] * 100),
+            axis=1
+        )
 
         st.dataframe(perf.sort_values("quality_score", ascending=False))
         st.bar_chart(perf.set_index(enum_col)["quality_score"])
