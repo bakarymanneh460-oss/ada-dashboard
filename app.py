@@ -6,11 +6,12 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
+import base64
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# UI STYLE
+# UI STYLE (PROFESSIONAL LOOK)
 # ==============================
 st.markdown("""
 <style>
@@ -26,6 +27,10 @@ section[data-testid="stSidebar"] label {
 section[data-testid="stSidebar"] input {
     color: black !important;
     background: white !important;
+}
+button {
+    font-size: 14px;
+    cursor: pointer;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -64,11 +69,10 @@ if df.empty:
     st.stop()
 
 # ==============================
-# DATE FILTER (START–END)
+# DATE FILTER
 # ==============================
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
-
     c1, c2 = st.sidebar.columns(2)
     start = c1.date_input("Start", df["_submission_time"].min())
     end = c2.date_input("End", df["_submission_time"].max())
@@ -86,12 +90,12 @@ if search:
     df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 # ==============================
-# ENUMERATOR DETECTION
+# ENUMERATOR
 # ==============================
 enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
 
 # ==============================
-# SAFE DUPLICATES
+# DUPLICATES
 # ==============================
 try:
     dup_mask = df.astype(str).duplicated()
@@ -165,9 +169,7 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ==============================
-    # ENUMERATOR PERFORMANCE (FIXED)
-    # ==============================
+    # ENUMERATOR PERFORMANCE
     if enum_col:
         st.subheader("Enumerator Performance")
 
@@ -177,9 +179,6 @@ if page == "Dashboard":
             flags = flag_df.groupby(enum_col).size().reset_index(name="flags")
             perf = perf.merge(flags, on=enum_col, how="left")
         else:
-            perf["flags"] = 0
-
-        if "flags" not in perf.columns:
             perf["flags"] = 0
 
         perf["flags"] = perf["flags"].fillna(0)
@@ -213,9 +212,11 @@ elif page == "Explorer":
     t2.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS
+# DOWNLOADS (PRO UI)
 # ==============================
 elif page == "Downloads":
+
+    st.subheader("Download Center")
 
     def to_excel():
         output = io.BytesIO()
@@ -224,19 +225,14 @@ elif page == "Downloads":
             flag_df.to_excel(writer, sheet_name="Flagged", index=False)
         return output.getvalue()
 
-    st.download_button("Download Excel", to_excel(), "data.xlsx")
-    st.download_button("Clean CSV", clean_df.to_csv(index=False), "clean.csv")
-    st.download_button("Flagged CSV", flag_df.to_csv(index=False), "flagged.csv")
-
-    # PDF
-    def create_pdf():
+    def to_pdf():
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer)
         styles = getSampleStyleSheet()
         content = []
 
         content.append(Paragraph("REDI ADA REPORT", styles["Title"]))
-        content.append(Spacer(1,10))
+        content.append(Spacer(1, 10))
         content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
 
         fig = plt.figure()
@@ -250,8 +246,21 @@ elif page == "Downloads":
         doc.build(content)
 
         buffer.seek(0)
-        return buffer
+        return buffer.getvalue()
 
-    st.download_button("Download PDF", create_pdf(), "report.pdf")
+    excel_b64 = base64.b64encode(to_excel()).decode()
+    pdf_b64 = base64.b64encode(to_pdf()).decode()
+    clean_b64 = base64.b64encode(clean_df.to_csv(index=False).encode()).decode()
+    flagged_b64 = base64.b64encode(flag_df.to_csv(index=False).encode()).decode()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.markdown(f'<a href="data:application/octet-stream;base64,{excel_b64}" download="data.xlsx"><button style="width:100%;background:#16a34a;color:white;padding:12px;border-radius:10px;">📊 Excel</button></a>', unsafe_allow_html=True)
+
+    c2.markdown(f'<a href="data:text/csv;base64,{clean_b64}" download="clean.csv"><button style="width:100%;background:#2563eb;color:white;padding:12px;border-radius:10px;">📁 Clean</button></a>', unsafe_allow_html=True)
+
+    c3.markdown(f'<a href="data:text/csv;base64,{flagged_b64}" download="flagged.csv"><button style="width:100%;background:#dc2626;color:white;padding:12px;border-radius:10px;">⚠️ Flagged</button></a>', unsafe_allow_html=True)
+
+    c4.markdown(f'<a href="data:application/pdf;base64,{pdf_b64}" download="report.pdf"><button style="width:100%;background:#1d4ed8;color:white;padding:12px;border-radius:10px;">📄 PDF</button></a>', unsafe_allow_html=True)
 
 st.caption(f"Updated: {datetime.now()}")
