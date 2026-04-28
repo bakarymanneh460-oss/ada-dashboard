@@ -12,16 +12,37 @@ import numpy as np
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# 🎨 UI
+# 🎨 FINAL UI (READABLE FIXED)
 # ==============================
 st.markdown("""
 <style>
+/* Sidebar background */
 section[data-testid="stSidebar"] {
     background-color: #1e3a8a !important;
 }
-section[data-testid="stSidebar"] * {
+
+/* Sidebar labels */
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p {
     color: white !important;
 }
+
+/* Inputs FIX */
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    background-color: white !important;
+    color: black !important;
+}
+
+/* Date picker fix */
+section[data-testid="stSidebar"] div[data-baseweb="input"] input {
+    color: black !important;
+}
+
+/* KPI Cards */
 .kpi-card {
     padding: 20px;
     border-radius: 12px;
@@ -84,13 +105,13 @@ if search:
 enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
 
 # ==============================
-# 📍 GPS DETECTION
+# GPS DETECTION
 # ==============================
 lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
 lon_col = next((c for c in df.columns if "lon" in c.lower() or "long" in c.lower()), None)
 
 # ==============================
-# 🧠 ANOMALY DETECTION
+# ANOMALY DETECTION
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
 
@@ -106,7 +127,7 @@ else:
 # ==============================
 clean, flagged = [], []
 
-for idx, row in df.iterrows():
+for _, row in df.iterrows():
     r = row.to_dict()
     errors = []
 
@@ -160,9 +181,7 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ==============================
     # MAP
-    # ==============================
     if lat_col and lon_col:
         st.subheader("🗺️ GPS Map")
         st.map(df[[lat_col, lon_col]].dropna())
@@ -171,17 +190,12 @@ if page == "Dashboard":
             st.subheader("⚠️ Flagged Locations")
             st.map(flag_df[[lat_col, lon_col]].dropna())
 
-    # ==============================
-    # ENUMERATOR TRACKING
-    # ==============================
+    # TRACKING
     if enum_col and lat_col and lon_col:
         st.subheader("🚶 Enumerator Tracking")
-        tracking = df.groupby(enum_col).size().reset_index(name="points")
-        st.dataframe(tracking)
+        st.dataframe(df.groupby(enum_col).size().reset_index(name="points"))
 
-    # ==============================
     # INSIGHTS
-    # ==============================
     st.subheader("🧠 Insights")
     if df["anomaly_flag"].sum() > 0:
         st.warning(f"{df['anomaly_flag'].sum()} anomalies detected")
