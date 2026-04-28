@@ -6,7 +6,7 @@ import io
 from datetime import datetime
 
 # ==============================
-# SAFE SPELLCHECKER
+# OPTIONAL SPELLCHECK (SAFE)
 # ==============================
 try:
     from spellchecker import SpellChecker
@@ -55,7 +55,7 @@ body {background-color:#f5f7fb;}
 """, unsafe_allow_html=True)
 
 # ==============================
-# 🔵 SIDEBAR LOGO
+# 🔵 SIDEBAR LOGO (FIXED)
 # ==============================
 st.sidebar.markdown("""
 <div style='background:linear-gradient(135deg,#1e3a8a,#2563eb);
@@ -64,12 +64,12 @@ st.sidebar.markdown("""
             text-align:center;
             box-shadow:0 6px 18px rgba(0,0,0,0.2);'>
 
-    <h2 style='color:white;
-               margin:0;
-               font-size:20px;
-               font-weight:600;'>
+    <div style='color:white;
+                font-size:20px;
+                font-weight:600;
+                letter-spacing:0.5px;'>
         REDI ADA System
-    </h2>
+    </div>
 
 </div>
 """, unsafe_allow_html=True)
@@ -112,7 +112,7 @@ def validate_numeric(row):
     return errors
 
 # ==============================
-# FETCH KOBO DATA
+# FETCH KOBO DATA (FIXED)
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data():
@@ -155,7 +155,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# CLEANING PROCESS
+# CLEANING
 # ==============================
 clean, flagged = [], []
 
@@ -163,12 +163,10 @@ for _, row in df.iterrows():
     row = row.to_dict()
     errors = []
 
-    # Text correction
     for k, v in row.items():
         if isinstance(v, str):
             row[k] = correct_text(v)
 
-    # Numeric validation
     errors.extend(validate_numeric(row))
 
     if errors:
@@ -181,7 +179,7 @@ clean_df = pd.DataFrame(clean)
 flag_df = pd.DataFrame(flagged)
 
 # ==============================
-# KPI METRICS
+# METRICS
 # ==============================
 total = len(df)
 valid = len(clean_df)
@@ -189,7 +187,7 @@ bad = len(flag_df)
 score = (valid / total) * 100 if total else 0
 
 # ==============================
-# EXPORT FUNCTIONS
+# EXPORTS (FIXED)
 # ==============================
 def export_excel():
     output = io.BytesIO()
@@ -240,23 +238,23 @@ elif page == "Data Explorer":
         st.dataframe(flag_df, use_container_width=True)
 
 # ==============================
-# DOWNLOADS
+# DOWNLOADS (FIXED BUTTONS)
 # ==============================
 elif page == "Downloads":
 
-    excel_file = export_excel()
-    report_file = export_report()
+    st.subheader("Download Data")
 
     st.download_button(
-        "📊 Download Full Excel (Multi-Sheet)",
-        excel_file,
-        f"ADA_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        "📊 Download Excel (Clean + Flagged)",
+        export_excel(),
+        f"ADA_Data_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
     st.download_button(
         "📄 Download Summary Report",
-        report_file,
-        f"ADA_Summary_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+        export_report(),
+        f"ADA_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
     )
 
 # ==============================
