@@ -18,7 +18,14 @@ except:
 # CONFIG
 # ==============================
 KOBO_TOKEN = os.getenv("KOBO_TOKEN")
-FORM_UID = "aQJmYa6Z9mJ5qwdw8RrQcj"
+
+# 👉 ADD YOUR KOBO FORMS HERE
+PROJECTS = {
+    "Main Survey": "aQJmYa6Z9mJ5qwdw8RrQcj",
+    # Add more like:
+    # "Economic Survey": "YOUR_FORM_UID",
+    # "Health Survey": "YOUR_FORM_UID"
+}
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
@@ -34,58 +41,65 @@ setTimeout(function(){
 """, unsafe_allow_html=True)
 
 # ==============================
-# STYLE (POWER BI LOOK)
+# CSS THEME (POWER BI STYLE)
 # ==============================
 st.markdown("""
 <style>
 body {background-color:#f5f7fb;}
-.card {
+
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1e3a8a, #2563eb);
+}
+section[data-testid="stSidebar"] * {
+    color:white !important;
+}
+
+.metric-card {
     background:white;
     padding:18px;
-    border-radius:12px;
-    box-shadow:0 3px 10px rgba(0,0,0,0.05);
+    border-radius:14px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.08);
     text-align:center;
 }
-.title {font-size:13px;color:gray;}
-.value {font-size:28px;font-weight:bold;}
+
+.metric-title {font-size:13px;color:#6b7280;}
+.metric-value {font-size:28px;font-weight:bold;}
+
 .green {color:#16a34a;}
 .red {color:#dc2626;}
 .orange {color:#f59e0b;}
+
+.stButton > button {
+    background:#2563eb;
+    color:white;
+    border-radius:8px;
+}
+
+.stDownloadButton > button {
+    background:#16a34a;
+    color:white;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================
-# 🔵 SIDEBAR LOGO (FIXED)
+# SIDEBAR
 # ==============================
-st.sidebar.markdown(
-    """
-    <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);
-                padding:18px;
-                border-radius:14px;
-                text-align:center;
-                box-shadow:0 6px 18px rgba(0,0,0,0.2);">
+st.sidebar.markdown("## REDI ADA System")
+st.sidebar.markdown("---")
 
-        <div style="color:white;
-                    font-size:20px;
-                    font-weight:600;">
-            REDI ADA System
-        </div>
+# 🔁 PROJECT SWITCHER
+selected_project = st.sidebar.selectbox("Select Project", list(PROJECTS.keys()))
+FORM_UID = PROJECTS[selected_project]
 
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# ==============================
-# NAVIGATION
-# ==============================
 page = st.sidebar.radio("Navigation", ["Dashboard", "Data Explorer", "Downloads"])
 
 if st.sidebar.button("🔄 Refresh Data"):
     st.rerun()
 
 # ==============================
-# TEXT CORRECTION
+# TEXT CLEANING
 # ==============================
 def correct_text(text):
     if not isinstance(text, str):
@@ -95,7 +109,7 @@ def correct_text(text):
     return " ".join([spell.correction(w) or w for w in text.split()])
 
 # ==============================
-# NUMERIC VALIDATION
+# VALIDATION
 # ==============================
 def validate_numeric(row):
     errors = []
@@ -106,27 +120,27 @@ def validate_numeric(row):
             if q > 0:
                 unit = p / q
                 if unit < 1000:
-                    errors.append("price_too_low")
+                    errors.append("low_price")
                 elif unit > 50000:
-                    errors.append("price_too_high")
+                    errors.append("high_price")
     except:
         errors.append("numeric_error")
     return errors
 
 # ==============================
-# FETCH KOBO DATA (FIXED)
+# FETCH DATA
 # ==============================
 @st.cache_data(ttl=60)
-def fetch_data():
+def fetch_data(form_uid):
     if not KOBO_TOKEN:
         st.error("❌ KOBO_TOKEN not set in Secrets")
         return pd.DataFrame()
 
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/data/?format=json"
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{form_uid}/data/?format=json"
     headers = {"Authorization": f"Token {KOBO_TOKEN.strip()}"}
 
     try:
-        res = requests.get(url, headers=headers, timeout=20)
+        res = requests.get(url, headers=headers)
 
         if res.status_code == 200:
             data = res.json().get("results", [])
@@ -148,16 +162,16 @@ def fetch_data():
     return pd.DataFrame()
 
 # ==============================
-# LOAD DATA
+# LOAD
 # ==============================
-df = fetch_data()
+df = fetch_data(FORM_UID)
 
 if df.empty:
     st.warning("No data available")
     st.stop()
 
 # ==============================
-# CLEANING
+# CLEAN
 # ==============================
 clean, flagged = [], []
 
@@ -189,7 +203,7 @@ bad = len(flag_df)
 score = (valid / total) * 100 if total else 0
 
 # ==============================
-# EXPORTS (FIXED)
+# EXPORT
 # ==============================
 def export_excel():
     output = io.BytesIO()
@@ -200,13 +214,14 @@ def export_excel():
 
 def export_report():
     return f"""
-ADA SYSTEM REPORT
+ADA REPORT
+Project: {selected_project}
 Generated: {datetime.now()}
 
-Total Records: {total}
-Valid Records: {valid}
-Flagged Records: {bad}
-Quality Score: {score:.2f}%
+Total: {total}
+Valid: {valid}
+Flagged: {bad}
+Score: {score:.2f}%
 """
 
 # ==============================
@@ -216,22 +231,22 @@ if page == "Dashboard":
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.markdown(f"<div class='card'><div class='title'>Total</div><div class='value'>{total}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='card'><div class='title'>Valid</div><div class='value green'>{valid}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='card'><div class='title'>Flagged</div><div class='value red'>{bad}</div></div>", unsafe_allow_html=True)
+    c1.markdown(f"<div class='metric-card'><div class='metric-title'>Total</div><div class='metric-value'>{total}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-card'><div class='metric-title'>Valid</div><div class='metric-value green'>{valid}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-card'><div class='metric-title'>Flagged</div><div class='metric-value red'>{bad}</div></div>", unsafe_allow_html=True)
 
     color = "green" if score > 85 else "orange" if score > 60 else "red"
-    c4.markdown(f"<div class='card'><div class='title'>Quality</div><div class='value {color}'>{score:.1f}%</div></div>", unsafe_allow_html=True)
 
-    st.subheader("Data Quality Overview")
+    c4.markdown(f"<div class='metric-card'><div class='metric-title'>Score</div><div class='metric-value {color}'>{score:.1f}%</div></div>", unsafe_allow_html=True)
+
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
 # ==============================
-# DATA EXPLORER
+# DATA
 # ==============================
 elif page == "Data Explorer":
 
-    t1, t2 = st.tabs(["Clean Data", "Flagged Data"])
+    t1, t2 = st.tabs(["Clean", "Flagged"])
 
     with t1:
         st.dataframe(clean_df, use_container_width=True)
@@ -240,23 +255,20 @@ elif page == "Data Explorer":
         st.dataframe(flag_df, use_container_width=True)
 
 # ==============================
-# DOWNLOADS (FIXED BUTTONS)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
-    st.subheader("Download Data")
-
     st.download_button(
-        "📊 Download Excel (Clean + Flagged)",
+        "📊 Download Excel",
         export_excel(),
-        f"ADA_Data_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "ADA_Data.xlsx"
     )
 
     st.download_button(
-        "📄 Download Summary Report",
+        "📄 Download Report",
         export_report(),
-        f"ADA_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+        "ADA_Report.txt"
     )
 
 # ==============================
