@@ -64,6 +64,7 @@ def fetch_data(uid, token):
     r = requests.get(url, headers=headers)
     if r.status_code != 200:
         st.error(f"API Error {r.status_code}")
+        st.error(r.text)
         return pd.DataFrame()
 
     data = r.json()
@@ -92,7 +93,7 @@ if search:
     df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 # ==============================
-# ENUMERATOR DETECTION
+# ENUMERATOR COLUMN DETECTION
 # ==============================
 enum_col = None
 for col in df.columns:
@@ -101,14 +102,25 @@ for col in df.columns:
         break
 
 # ==============================
+# ✅ SAFE DUPLICATE DETECTION
+# ==============================
+try:
+    dup_mask = df.astype(str).duplicated()
+except:
+    dup_mask = pd.Series([False]*len(df))
+
+duplicate_indices = set(df[dup_mask].index)
+
+# ==============================
 # VALIDATION + ANOMALY
 # ==============================
-clean, flagged, anomalies = [], [], []
+clean, flagged = [], []
 
-for _, row in df.iterrows():
+for idx, row in df.iterrows():
     r = row.to_dict()
     errors = []
 
+    # Price validation
     try:
         if "quantity" in r and "price" in r:
             q = float(r["quantity"])
@@ -122,13 +134,19 @@ for _, row in df.iterrows():
     except:
         pass
 
-    # 🚨 anomaly: duplicate rows
-    if df.duplicated().any():
+    # ✅ Duplicate detection (fixed)
+    if idx in duplicate_indices:
         errors.append("duplicate")
 
-    # 🚨 anomaly: too fast submission (<5 sec)
-    if "_submission_time" in df.columns:
-        anomalies.append(r)
+    # 🚨 Basic anomaly detection
+    if r.get("quantity") in [None, "", 0]:
+        errors.append("missing_quantity")
+
+    try:
+        if "price" in r and float(r["price"]) > 1000000:
+            errors.append("extreme_price")
+    except:
+        pass
 
     if errors:
         r["errors"] = ", ".join(errors)
@@ -138,7 +156,6 @@ for _, row in df.iterrows():
 
 clean_df = pd.DataFrame(clean)
 flag_df = pd.DataFrame(flagged)
-anomaly_df = pd.DataFrame(anomalies)
 
 # ==============================
 # METRICS
@@ -162,9 +179,7 @@ if page == "Dashboard":
     st.subheader("Validation Overview")
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ==========================
-    # 👤 ENUMERATOR PERFORMANCE
-    # ==========================
+    # 👤 Enumerator performance
     if enum_col:
         st.subheader("Enumerator Performance")
 
@@ -177,26 +192,19 @@ if page == "Dashboard":
         perf["quality_score"] = 100 - (perf["flags"] / perf["submissions"] * 100)
 
         st.dataframe(perf.sort_values("quality_score", ascending=False))
-
         st.bar_chart(perf.set_index(enum_col)["quality_score"])
 
-    # ==========================
-    # 🚨 ANOMALY DISPLAY
-    # ==========================
-    st.subheader("Anomalies Detected")
-    st.write(f"Total anomalies: {len(flag_df)}")
+    # 🚨 anomalies
+    st.subheader("Flagged / Anomalies")
+    st.write(f"Total flagged: {bad}")
     st.dataframe(flag_df.head(50))
 
-    # ==========================
-    # 📈 TREND
-    # ==========================
+    # 📈 Trend
     if "_submission_time" in df.columns:
         trend = df.groupby(df["_submission_time"].dt.date).size()
         st.line_chart(trend)
 
-    # ==========================
-    # 🗺 MAP
-    # ==========================
+    # 🗺 Map
     gps = [c for c in df.columns if "lat" in c.lower() or "lon" in c.lower()]
     if len(gps) >= 2:
         try:
