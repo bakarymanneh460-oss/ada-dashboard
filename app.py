@@ -57,22 +57,24 @@ body {background-color:#f5f7fb;}
 # ==============================
 # 🔵 SIDEBAR LOGO (FIXED)
 # ==============================
-st.sidebar.markdown("""
-<div style='background:linear-gradient(135deg,#1e3a8a,#2563eb);
-            padding:18px;
-            border-radius:14px;
-            text-align:center;
-            box-shadow:0 6px 18px rgba(0,0,0,0.2);'>
+st.sidebar.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);
+                padding:18px;
+                border-radius:14px;
+                text-align:center;
+                box-shadow:0 6px 18px rgba(0,0,0,0.2);">
 
-    <div style='color:white;
-                font-size:20px;
-                font-weight:600;
-                letter-spacing:0.5px;'>
-        REDI ADA System
+        <div style="color:white;
+                    font-size:20px;
+                    font-weight:600;">
+            REDI ADA System
+        </div>
+
     </div>
-
-</div>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True
+)
 
 # ==============================
 # NAVIGATION
