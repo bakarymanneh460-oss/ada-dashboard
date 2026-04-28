@@ -18,7 +18,7 @@ setTimeout(function(){
 """, unsafe_allow_html=True)
 
 # ==============================
-# UI (BLUE SIDEBAR)
+# UI (BLUE SIDEBAR + BLACK INPUTS)
 # ==============================
 st.markdown("""
 <style>
@@ -27,8 +27,28 @@ body {background-color:#f5f7fb;}
 section[data-testid="stSidebar"] {
     background-color: #2563eb !important;
 }
+
 section[data-testid="stSidebar"] * {
     color: white !important;
+}
+
+section[data-testid="stSidebar"] label {
+    color: black !important;
+    font-weight: 600;
+}
+
+section[data-testid="stSidebar"] input {
+    color: black !important;
+    background-color: white !important;
+}
+
+section[data-testid="stSidebar"] .stDateInput input {
+    color: black !important;
+    background-color: white !important;
+}
+
+section[data-testid="stSidebar"] input::placeholder {
+    color: #6b7280 !important;
 }
 
 .stDownloadButton > button {
@@ -54,7 +74,7 @@ except:
     KOBO_TOKEN = None
 
 # ==============================
-# FETCH DATA (CORRECT API)
+# FETCH DATA
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data(uid, token):
@@ -78,25 +98,42 @@ if df.empty:
     st.stop()
 
 # ==============================
-# FILTERS
+# FILTERS (UPDATED START–END)
 # ==============================
 st.sidebar.markdown("### Filters")
 
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
-    dr = st.sidebar.date_input("Date Range", [df["_submission_time"].min(), df["_submission_time"].max()])
-    if len(dr) == 2:
-        df = df[
-            (df["_submission_time"] >= pd.to_datetime(dr[0])) &
-            (df["_submission_time"] <= pd.to_datetime(dr[1]))
-        ]
+
+    st.sidebar.markdown("### Date Range")
+
+    col1, col2 = st.sidebar.columns(2)
+
+    with col1:
+        start_date = st.date_input(
+            "Start",
+            value=df["_submission_time"].min()
+        )
+
+    with col2:
+        end_date = st.date_input(
+            "End",
+            value=df["_submission_time"].max()
+        )
+
+    df = df[
+        (df["_submission_time"] >= pd.to_datetime(start_date)) &
+        (df["_submission_time"] <= pd.to_datetime(end_date))
+    ]
 
 search = st.sidebar.text_input("Search")
 if search:
-    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
+    df = df[df.astype(str).apply(
+        lambda x: x.str.contains(search, case=False).any(), axis=1
+    )]
 
 # ==============================
-# ENUMERATOR COLUMN DETECTION
+# ENUMERATOR DETECTION
 # ==============================
 enum_col = None
 for col in df.columns:
@@ -105,7 +142,7 @@ for col in df.columns:
         break
 
 # ==============================
-# SAFE DUPLICATE DETECTION
+# DUPLICATES (SAFE)
 # ==============================
 try:
     dup_mask = df.astype(str).duplicated()
@@ -115,17 +152,15 @@ except:
 duplicate_indices = set(df[dup_mask].index)
 
 # ==============================
-# SAFE VALIDATION
+# VALIDATION
 # ==============================
 clean, flagged = [], []
-
 numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
 for idx, row in df.iterrows():
     r = row.to_dict()
     errors = []
 
-    # Only validate if fields exist
     if "quantity" in df.columns and "price" in df.columns:
         try:
             q = float(r.get("quantity", 0))
@@ -142,12 +177,10 @@ for idx, row in df.iterrows():
         except:
             pass
 
-    # Duplicate check (only if reasonable)
     if len(duplicate_indices) < len(df) * 0.5:
         if idx in duplicate_indices:
             errors.append("duplicate")
 
-    # Generic anomaly (extreme numeric values)
     for col in numeric_cols:
         try:
             val = float(r.get(col, 0))
@@ -187,7 +220,6 @@ if page == "Dashboard":
     st.subheader("Validation Overview")
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # Enumerator Performance
     if enum_col:
         st.subheader("Enumerator Performance")
 
@@ -202,17 +234,13 @@ if page == "Dashboard":
         st.dataframe(perf.sort_values("quality_score", ascending=False))
         st.bar_chart(perf.set_index(enum_col)["quality_score"])
 
-    # Flagged data
     st.subheader("Flagged Data")
-    st.write(f"Total flagged: {bad}")
     st.dataframe(flag_df.head(50))
 
-    # Trend
     if "_submission_time" in df.columns:
         trend = df.groupby(df["_submission_time"].dt.date).size()
         st.line_chart(trend)
 
-    # Map
     gps = [c for c in df.columns if "lat" in c.lower() or "lon" in c.lower()]
     if len(gps) >= 2:
         try:
