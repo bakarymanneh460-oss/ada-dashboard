@@ -3,19 +3,11 @@ import pandas as pd
 import io
 import requests
 from datetime import datetime
+import matplotlib.pyplot as plt
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
-
-# ==============================
-# AUTO REFRESH
-# ==============================
-st.markdown("""
-<script>
-setTimeout(function(){
-    window.location.reload();
-}, 60000);
-</script>
-""", unsafe_allow_html=True)
 
 # ==============================
 # UI (BLUE SIDEBAR + BLACK INPUTS)
@@ -27,33 +19,23 @@ body {background-color:#f5f7fb;}
 section[data-testid="stSidebar"] {
     background-color: #2563eb !important;
 }
-
 section[data-testid="stSidebar"] * {
     color: white !important;
 }
-
 section[data-testid="stSidebar"] label {
     color: black !important;
     font-weight: 600;
 }
-
 section[data-testid="stSidebar"] input {
     color: black !important;
     background-color: white !important;
 }
-
 section[data-testid="stSidebar"] .stDateInput input {
     color: black !important;
     background-color: white !important;
 }
-
 section[data-testid="stSidebar"] input::placeholder {
     color: #6b7280 !important;
-}
-
-.stDownloadButton > button {
-    background:#16a34a;
-    color:white;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -82,14 +64,11 @@ def fetch_data(uid, token):
     headers = {"Authorization": f"Token {token}"} if token else {}
 
     r = requests.get(url, headers=headers)
-
     if r.status_code != 200:
         st.error(f"API Error {r.status_code}")
-        st.error(r.text)
         return pd.DataFrame()
 
-    data = r.json()
-    return pd.json_normalize(data.get("results", []))
+    return pd.json_normalize(r.json().get("results", []))
 
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
@@ -98,32 +77,28 @@ if df.empty:
     st.stop()
 
 # ==============================
-# FILTERS (START–END)
+# DATE FILTER (START–END)
 # ==============================
-st.sidebar.markdown("### Filters")
-
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
 
-    st.sidebar.markdown("### Date Range")
     col1, col2 = st.sidebar.columns(2)
-
     with col1:
-        start_date = st.date_input("Start", value=df["_submission_time"].min())
-
+        start = st.date_input("Start", df["_submission_time"].min())
     with col2:
-        end_date = st.date_input("End", value=df["_submission_time"].max())
+        end = st.date_input("End", df["_submission_time"].max())
 
     df = df[
-        (df["_submission_time"] >= pd.to_datetime(start_date)) &
-        (df["_submission_time"] <= pd.to_datetime(end_date))
+        (df["_submission_time"] >= pd.to_datetime(start)) &
+        (df["_submission_time"] <= pd.to_datetime(end))
     ]
 
+# ==============================
+# SEARCH
+# ==============================
 search = st.sidebar.text_input("Search")
 if search:
-    df = df[df.astype(str).apply(
-        lambda x: x.str.contains(search, case=False).any(), axis=1
-    )]
+    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 # ==============================
 # ENUMERATOR DETECTION
@@ -135,7 +110,7 @@ for col in df.columns:
         break
 
 # ==============================
-# DUPLICATES (SAFE)
+# SAFE DUPLICATES
 # ==============================
 try:
     dup_mask = df.astype(str).duplicated()
@@ -154,12 +129,10 @@ for idx, row in df.iterrows():
     r = row.to_dict()
     errors = []
 
-    # Example validation (only if fields exist)
     if "quantity" in df.columns and "price" in df.columns:
         try:
             q = float(r.get("quantity", 0))
             p = float(r.get("price", 0))
-
             if q == 0:
                 errors.append("missing_quantity")
             elif q > 0:
@@ -171,12 +144,10 @@ for idx, row in df.iterrows():
         except:
             pass
 
-    # Duplicate check
     if len(duplicate_indices) < len(df) * 0.5:
         if idx in duplicate_indices:
             errors.append("duplicate")
 
-    # Extreme values
     for col in numeric_cols:
         try:
             val = float(r.get(col, 0))
@@ -216,17 +187,15 @@ if page == "Dashboard":
     st.subheader("Validation Overview")
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ==========================
     # ENUMERATOR PERFORMANCE (FIXED)
-    # ==========================
     if enum_col:
         st.subheader("Enumerator Performance")
 
         perf = df.groupby(enum_col).size().reset_index(name="submissions")
 
         if not flag_df.empty and enum_col in flag_df.columns:
-            flag_counts = flag_df.groupby(enum_col).size().reset_index(name="flags")
-            perf = perf.merge(flag_counts, on=enum_col, how="left")
+            flags = flag_df.groupby(enum_col).size().reset_index(name="flags")
+            perf = perf.merge(flags, on=enum_col, how="left")
         else:
             perf["flags"] = 0
 
@@ -240,23 +209,20 @@ if page == "Dashboard":
             axis=1
         )
 
-        st.dataframe(perf.sort_values("quality_score", ascending=False))
+        # COLOR LOGIC
+        def color(val):
+            if val >= 85:
+                return "background-color:#16a34a; color:white"
+            elif val >= 60:
+                return "background-color:#facc15; color:black"
+            else:
+                return "background-color:#dc2626; color:white"
+
+        st.dataframe(perf.style.applymap(color, subset=["quality_score"]))
         st.bar_chart(perf.set_index(enum_col)["quality_score"])
 
     st.subheader("Flagged Data")
     st.dataframe(flag_df.head(50))
-
-    if "_submission_time" in df.columns:
-        trend = df.groupby(df["_submission_time"].dt.date).size()
-        st.line_chart(trend)
-
-    gps = [c for c in df.columns if "lat" in c.lower() or "lon" in c.lower()]
-    if len(gps) >= 2:
-        try:
-            map_df = df.rename(columns={gps[0]: "lat", gps[1]: "lon"})
-            st.map(map_df[["lat","lon"]].dropna())
-        except:
-            pass
 
 # ==============================
 # EXPLORER
@@ -271,6 +237,7 @@ elif page == "Explorer":
 # ==============================
 elif page == "Downloads":
 
+    # Excel
     def to_excel():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -280,16 +247,67 @@ elif page == "Downloads":
 
     st.download_button("Download Excel", to_excel(), "data.xlsx")
 
-    report = f"""
-REDI ADA REPORT
-Generated: {datetime.now()}
+    # CSV
+    st.download_button("Download Clean CSV", clean_df.to_csv(index=False), "clean.csv")
+    st.download_button("Download Flagged CSV", flag_df.to_csv(index=False), "flagged.csv")
 
-Total: {total}
-Valid: {valid}
-Flagged: {bad}
-Score: {score:.2f}%
-"""
-    st.download_button("Download Report", report, "report.txt")
+    # PDF with charts
+    def create_pdf():
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+        content = []
+
+        content.append(Paragraph("REDI ADA REPORT", styles["Title"]))
+        content.append(Spacer(1, 10))
+        content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
+        content.append(Spacer(1, 10))
+
+        content.append(Paragraph(f"Total: {total}", styles["Normal"]))
+        content.append(Paragraph(f"Valid: {valid}", styles["Normal"]))
+        content.append(Paragraph(f"Flagged: {bad}", styles["Normal"]))
+        content.append(Paragraph(f"Score: {score:.2f}%", styles["Normal"]))
+        content.append(Spacer(1, 20))
+
+        # Chart 1
+        fig1 = plt.figure()
+        plt.bar(["Valid", "Flagged"], [valid, bad])
+        plt.title("Validation Overview")
+
+        img1 = io.BytesIO()
+        plt.savefig(img1, format="png")
+        plt.close(fig1)
+        img1.seek(0)
+
+        content.append(Image(img1, width=400, height=250))
+
+        # Chart 2
+        if enum_col:
+            perf = df.groupby(enum_col).size().reset_index(name="submissions")
+            perf["flags"] = 0
+            if not flag_df.empty and enum_col in flag_df.columns:
+                f = flag_df.groupby(enum_col).size().reset_index(name="flags")
+                perf = perf.merge(f, on=enum_col, how="left").fillna(0)
+
+            perf["quality_score"] = 100 - (perf["flags"]/perf["submissions"]*100)
+
+            fig2 = plt.figure()
+            plt.bar(perf[enum_col].astype(str), perf["quality_score"])
+            plt.xticks(rotation=45)
+            plt.title("Enumerator Performance")
+
+            img2 = io.BytesIO()
+            plt.savefig(img2, format="png", bbox_inches="tight")
+            plt.close(fig2)
+            img2.seek(0)
+
+            content.append(Image(img2, width=400, height=250))
+
+        doc.build(content)
+        buffer.seek(0)
+        return buffer
+
+    st.download_button("Download PDF Report", create_pdf(), "report.pdf")
 
 # ==============================
 # FOOTER
