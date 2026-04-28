@@ -9,19 +9,17 @@ from reportlab.lib.styles import getSampleStyleSheet
 import base64
 import numpy as np
 
-st.set_page_config(page_title="REDI ADA System", layout="wide")
+st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
-# 🎨 FINAL UI (READABLE FIXED)
+# 🎨 UI (FIXED + CLEAN)
 # ==============================
 st.markdown("""
 <style>
-/* Sidebar background */
 section[data-testid="stSidebar"] {
     background-color: #1e3a8a !important;
 }
 
-/* Sidebar labels */
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
@@ -30,19 +28,16 @@ section[data-testid="stSidebar"] p {
     color: white !important;
 }
 
-/* Inputs FIX */
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea {
     background-color: white !important;
     color: black !important;
 }
 
-/* Date picker fix */
 section[data-testid="stSidebar"] div[data-baseweb="input"] input {
     color: black !important;
 }
 
-/* KPI Cards */
 .kpi-card {
     padding: 20px;
     border-radius: 12px;
@@ -53,10 +48,10 @@ section[data-testid="stSidebar"] div[data-baseweb="input"] input {
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIDEBAR
+# 🧭 SIDEBAR (UPDATED BRANDING ONLY)
 # ==============================
-st.sidebar.markdown("## REDI ADA System")
-st.sidebar.caption("AI-Driven Data Quality Platform")
+st.sidebar.markdown("## 📊 REDI Data Quality System")
+st.sidebar.caption("Field Data Quality & Monitoring Tool")
 
 FORM_UID = st.sidebar.text_input("Form UID", "aQJmYa6Z9mJ5qwdw8RrQcj")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
@@ -64,7 +59,7 @@ page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 # ==============================
-# FETCH DATA
+# 📥 FETCH DATA
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data(uid, token):
@@ -111,7 +106,7 @@ lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
 lon_col = next((c for c in df.columns if "lon" in c.lower() or "long" in c.lower()), None)
 
 # ==============================
-# ANOMALY DETECTION
+# ANOMALY DETECTION (UNCHANGED)
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
 
@@ -123,7 +118,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# VALIDATION
+# VALIDATION (UNCHANGED)
 # ==============================
 clean, flagged = [], []
 
@@ -167,11 +162,11 @@ bad = len(flag_df)
 score = (valid / total * 100) if total else 0
 
 # ==============================
-# DASHBOARD
+# 📊 DASHBOARD (UNCHANGED)
 # ==============================
 if page == "Dashboard":
 
-    st.title("📊 REDI ADA Dashboard")
+    st.title("📊 REDI Data Quality Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
@@ -181,7 +176,6 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # MAP
     if lat_col and lon_col:
         st.subheader("🗺️ GPS Map")
         st.map(df[[lat_col, lon_col]].dropna())
@@ -190,12 +184,10 @@ if page == "Dashboard":
             st.subheader("⚠️ Flagged Locations")
             st.map(flag_df[[lat_col, lon_col]].dropna())
 
-    # TRACKING
     if enum_col and lat_col and lon_col:
         st.subheader("🚶 Enumerator Tracking")
         st.dataframe(df.groupby(enum_col).size().reset_index(name="points"))
 
-    # INSIGHTS
     st.subheader("🧠 Insights")
     if df["anomaly_flag"].sum() > 0:
         st.warning(f"{df['anomaly_flag'].sum()} anomalies detected")
@@ -206,7 +198,7 @@ if page == "Dashboard":
     st.dataframe(flag_df.head(50))
 
 # ==============================
-# EXPLORER
+# 🔍 EXPLORER
 # ==============================
 elif page == "Explorer":
     t1, t2 = st.tabs(["Clean", "Flagged"])
@@ -214,7 +206,7 @@ elif page == "Explorer":
     t2.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS
+# 📥 DOWNLOADS (UNCHANGED)
 # ==============================
 elif page == "Downloads":
 
@@ -233,7 +225,7 @@ elif page == "Downloads":
         styles = getSampleStyleSheet()
         content = []
 
-        content.append(Paragraph("REDI ADA REPORT", styles["Title"]))
+        content.append(Paragraph("REDI DATA QUALITY REPORT", styles["Title"]))
         content.append(Spacer(1, 10))
         content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
 
