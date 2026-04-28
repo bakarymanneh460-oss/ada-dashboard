@@ -1,237 +1,254 @@
 import streamlit as st
 import pandas as pd
 import requests
+import os
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
+from spellchecker import SpellChecker
 
-# ===============================
-# CONFIG
-# ===============================
-st.set_page_config(
-    page_title="ADA System",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# ===============================
-# AUTO REFRESH (30s)
-# ===============================
-st_autorefresh(interval=30000, key="refresh")
-
-# ===============================
-# KOBO SETTINGS (HARDCODED FOR DEMO)
-# ===============================
-KOBO_TOKEN = "a2ab18a6fc3c16ae848742bfa03058b15a0d6538"
+# ==============================
+# 🔐 CONFIG (USE SECRETS)
+# ==============================
+KOBO_TOKEN = os.getenv("KOBO_TOKEN")
 FORM_UID = "aQJmYa6Z9mJ5qwdw8RrQcj"
 
-# ===============================
-# FETCH DATA
-# ===============================
-@st.cache_data
-def fetch_data():
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/data/?format=json"
+# ==============================
+# 🎨 PAGE CONFIG
+# ==============================
+st.set_page_config(page_title="ADA Dashboard", layout="wide")
 
-    headers = {
-        "Authorization": f"Token {KOBO_TOKEN}"
-    }
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.status_code}")
-
-    data = response.json().get("results", [])
-    df = pd.json_normalize(data)
-
-    return df
-
-# ===============================
-# LOAD DATA
-# ===============================
-try:
-    df = fetch_data()
-    st.success(f"✅ Live data loaded ({len(df)} records)")
-except Exception as e:
-    st.error(f"❌ Failed to load Kobo data: {e}")
-    st.stop()
-
-# ===============================
-# VALIDATION
-# ===============================
-def validate(row):
-    errors = []
-
-    if "age" in row:
-        try:
-            if row["age"] < 15 or row["age"] > 60:
-                errors.append("invalid_age")
-        except:
-            errors.append("invalid_age")
-
-    return errors
-
-df["errors"] = df.apply(validate, axis=1)
-df["is_valid"] = df["errors"].apply(lambda x: len(x) == 0)
-
-clean_df = df[df["is_valid"]]
-flagged_df = df[~df["is_valid"]]
-
-total = len(df)
-valid = len(clean_df)
-flagged = len(flagged_df)
-score = (valid / total) * 100 if total > 0 else 0
-
-# ===============================
-# 🚨 LIVE ALERT SYSTEM
-# ===============================
-if flagged > 0:
-    st.markdown(
-        f"<h3 style='color:red;'>🚨 ALERT: {flagged} problematic records detected!</h3>",
-        unsafe_allow_html=True
-    )
-
-    error_counts = flagged_df["errors"].explode().value_counts()
-    top_issue = error_counts.idxmax()
-
-    st.warning(f"⚠️ Most common issue: {top_issue}")
-
-    if "enumerator" in flagged_df.columns:
-        top_enum = (
-            flagged_df.groupby("enumerator")
-            .size()
-            .sort_values(ascending=False)
-            .index[0]
-        )
-        st.warning(f"👤 Highest errors from: {top_enum}")
-
-else:
-    st.success("✅ No data quality issues detected")
-
-# ===============================
-# SIDEBAR
-# ===============================
-st.sidebar.title("📊 ADA System")
-st.sidebar.caption("Real-Time Monitoring")
-
-page = st.sidebar.radio(
-    "Navigation",
-    ["🏠 Overview", "📋 Data Tables", "📊 Analytics"]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.info("🔄 Auto-refresh enabled (30s)")
-
-# ===============================
-# HEADER
-# ===============================
+# ==============================
+# 🎨 STYLE
+# ==============================
 st.markdown("""
-<div style='display:flex; align-items:center; gap:15px;'>
-    <div style='
-        width:60px;height:60px;border-radius:50%;
-        background: linear-gradient(135deg,#2E86C1,#28B463);
-        display:flex;align-items:center;justify-content:center;
-        color:white;font-weight:bold;font-size:22px;'>
-        ADA
-    </div>
-    <div>
-        <h2 style='margin:0;'>ADA System Dashboard</h2>
-        <p style='margin:0;color:gray;'>Automated Data Auditing & Monitoring</p>
-    </div>
+<style>
+body {background-color:#f5f7fb;}
+
+.card {
+    background:white;
+    padding:18px;
+    border-radius:12px;
+    box-shadow:0 3px 10px rgba(0,0,0,0.05);
+    text-align:center;
+}
+
+.title {font-size:13px;color:gray;}
+.value {font-size:28px;font-weight:bold;}
+
+.green {color:#16a34a;}
+.red {color:#dc2626;}
+.orange {color:#f59e0b;}
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================
+# 📌 SIDEBAR
+# ==============================
+st.sidebar.markdown("""
+<div style='background:#2563eb;padding:12px;border-radius:10px;text-align:center'>
+<h2 style='color:white;margin:0'>REDI</h2>
 </div>
 """, unsafe_allow_html=True)
 
-st.caption(f"🕒 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-st.divider()
+st.sidebar.title("Navigation")
 
-# ===============================
-# OVERVIEW
-# ===============================
-if page == "🏠 Overview":
+page = st.sidebar.radio(
+    "Go to",
+    ["Dashboard", "Data Explorer", "Downloads"]
+)
 
-    st.subheader("📊 System Overview")
+st.sidebar.markdown("---")
+st.sidebar.subheader("Project Info")
+st.sidebar.write("Form UID:", FORM_UID)
 
-    col1, col2, col3, col4 = st.columns(4)
+if st.sidebar.button("🔄 Refresh Data"):
+    st.rerun()
 
-    col1.metric("Total Records", total)
-    col2.metric("Valid Records", valid)
-    col3.metric("Flagged Records", flagged)
-    col4.metric("Quality Score", f"{score:.1f}%")
+st.sidebar.markdown("---")
+st.sidebar.caption("ADA System v1.0")
 
-    st.progress(score / 100)
+# ==============================
+# 🌍 SPELL CHECK
+# ==============================
+spell = SpellChecker()
 
-# ===============================
-# DATA TABLES
-# ===============================
-elif page == "📋 Data Tables":
+CUSTOM_DICT = {
+    "tdk": "tidak",
+    "yg": "yang",
+    "dr": "dari",
+    "krn": "karena",
+    "utk": "untuk",
+    "dapt": "dapat"
+}
 
-    st.subheader("📋 Data Explorer")
+def correct_text(text):
+    if not isinstance(text, str):
+        return text
 
-    tab1, tab2 = st.tabs(["✅ Clean Data", "🚨 Flagged Data"])
+    words = text.split()
+    corrected = []
 
-    with tab1:
+    for w in words:
+        lw = w.lower()
+        if lw in CUSTOM_DICT:
+            corrected.append(CUSTOM_DICT[lw])
+        else:
+            corrected.append(spell.correction(w) or w)
+
+    return " ".join(corrected)
+
+# ==============================
+# 🔢 NUMERIC VALIDATION
+# ==============================
+def validate_numeric(row):
+    errors = []
+    try:
+        if "quantity" in row and "price" in row:
+            q = float(row["quantity"])
+            p = float(row["price"])
+
+            if q > 0:
+                unit_price = p / q
+
+                if unit_price < 1000:
+                    errors.append("price_too_low")
+                elif unit_price > 50000:
+                    errors.append("price_too_high")
+
+    except:
+        errors.append("numeric_error")
+
+    return errors
+
+# ==============================
+# 🌐 FETCH DATA (AUTO REFRESH 60s)
+# ==============================
+@st.cache_data(ttl=60)
+def fetch_data():
+    if not KOBO_TOKEN:
+        st.error("❌ KOBO_TOKEN not set in Secrets")
+        return pd.DataFrame()
+
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/data.json"
+
+    headers = {
+        "Authorization": f"Token {KOBO_TOKEN.strip()}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        res = requests.get(url, headers=headers)
+
+        if res.status_code == 200:
+            return pd.DataFrame(res.json().get("results", []))
+
+        elif res.status_code == 401:
+            st.error("❌ Invalid Kobo Token")
+        elif res.status_code == 404:
+            st.error("❌ Wrong Form UID")
+        else:
+            st.error(f"❌ API Error: {res.status_code}")
+
+    except Exception as e:
+        st.error(f"❌ Connection error: {e}")
+
+    return pd.DataFrame()
+
+# ==============================
+# 📥 LOAD DATA
+# ==============================
+df = fetch_data()
+
+if df.empty:
+    st.warning("No data available")
+    st.stop()
+
+# ==============================
+# 🧹 CLEAN DATA
+# ==============================
+clean_data, flagged_data = [], []
+
+for _, row in df.iterrows():
+    row = row.to_dict()
+    errors = []
+
+    for k, v in row.items():
+        if isinstance(v, str):
+            row[k] = correct_text(v)
+
+    errors.extend(validate_numeric(row))
+
+    if errors:
+        row["errors"] = ", ".join(errors)
+        flagged_data.append(row)
+    else:
+        clean_data.append(row)
+
+clean_df = pd.DataFrame(clean_data)
+flag_df = pd.DataFrame(flagged_data)
+
+# ==============================
+# 📊 KPI
+# ==============================
+total = len(df)
+valid = len(clean_df)
+flagged = len(flag_df)
+score = (valid / total) * 100 if total > 0 else 0
+
+# ==============================
+# 📄 DASHBOARD
+# ==============================
+if page == "Dashboard":
+
+    st.title("📊 ADA Dashboard")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.markdown(f"<div class='card'><div class='title'>Total</div><div class='value'>{total}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='card'><div class='title'>Valid</div><div class='value green'>{valid}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='card'><div class='title'>Flagged</div><div class='value red'>{flagged}</div></div>", unsafe_allow_html=True)
+
+    color = "green" if score > 85 else "orange" if score > 60 else "red"
+    c4.markdown(f"<div class='card'><div class='title'>Quality</div><div class='value {color}'>{score:.1f}%</div></div>", unsafe_allow_html=True)
+
+    st.subheader("📊 Data Quality Overview")
+    chart = pd.DataFrame({
+        "Type": ["Valid", "Flagged"],
+        "Count": [valid, flagged]
+    })
+    st.bar_chart(chart.set_index("Type"))
+
+    st.subheader("🚨 Status")
+    if flagged > 0:
+        st.error(f"{flagged} records need attention")
+    else:
+        st.success("All data is clean")
+
+# ==============================
+# 📄 DATA EXPLORER
+# ==============================
+elif page == "Data Explorer":
+
+    st.title("📋 Data Explorer")
+
+    t1, t2 = st.tabs(["Clean Data", "Flagged Data"])
+
+    with t1:
         st.dataframe(clean_df, use_container_width=True)
 
-    with tab2:
-        st.dataframe(flagged_df, use_container_width=True)
+    with t2:
+        st.dataframe(flag_df, use_container_width=True)
 
-    st.download_button(
-        "⬇ Download Clean Data",
-        clean_df.to_csv(index=False),
-        "clean_data.csv"
-    )
+# ==============================
+# 📄 DOWNLOADS
+# ==============================
+elif page == "Downloads":
 
-    st.download_button(
-        "⬇ Download Flagged Data",
-        flagged_df.to_csv(index=False),
-        "flagged_data.csv"
-    )
+    st.title("⬇ Download Data")
 
-# ===============================
-# ANALYTICS
-# ===============================
-elif page == "📊 Analytics":
+    st.download_button("Download Clean Data", clean_df.to_csv(index=False), "clean.csv")
+    st.download_button("Download Flagged Data", flag_df.to_csv(index=False), "flagged.csv")
 
-    st.subheader("📊 Data Insights")
-
-    if not flagged_df.empty:
-
-        error_counts = flagged_df["errors"].explode().value_counts()
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write("📌 Error Summary")
-            st.bar_chart(error_counts)
-
-        with col2:
-            st.write("📈 Error Distribution")
-            st.line_chart(error_counts)
-
-        st.info(f"🧠 Top issue: {error_counts.idxmax()}")
-
-        # Enumerator performance
-        if "enumerator" in df.columns:
-            st.subheader("👤 Enumerator Performance")
-
-            perf = flagged_df.groupby("enumerator").size().reset_index(name="Errors")
-
-            st.bar_chart(perf.set_index("enumerator"))
-            st.dataframe(perf, use_container_width=True)
-
-            if len(perf["Errors"].unique()) == 1:
-                st.info("ℹ️ Equal performance across all enumerators")
-            else:
-                worst = perf.sort_values("Errors", ascending=False).iloc[0]
-                best = perf.sort_values("Errors", ascending=True).iloc[0]
-
-                st.warning(f"⚠️ Needs Attention: {worst['enumerator']} ({worst['Errors']} errors)")
-                st.success(f"🏆 Best Performer: {best['enumerator']} ({best['Errors']} errors)")
-
-    else:
-        st.success("🎉 No issues found — excellent data quality!")
-
-# ===============================
-# FOOTER
-# ===============================
-st.markdown("---")
-st.caption("ADA System • Live Kobo Integration • Auto Alerts Enabled")
+# ==============================
+# 🕒 FOOTER
+# ==============================
+st.caption(f"Last updated: {datetime.now()}")
