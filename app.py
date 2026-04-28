@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import requests
 from datetime import datetime
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
@@ -17,48 +18,11 @@ setTimeout(function(){
 """, unsafe_allow_html=True)
 
 # ==============================
-# CSS (POWER BI STYLE)
-# ==============================
-st.markdown("""
-<style>
-body {background-color:#f5f7fb;}
-
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #1e3a8a, #2563eb);
-}
-section[data-testid="stSidebar"] * {
-    color:white !important;
-}
-
-.metric-card {
-    background:white;
-    padding:18px;
-    border-radius:14px;
-    box-shadow:0 4px 14px rgba(0,0,0,0.08);
-    text-align:center;
-}
-
-.metric-title {font-size:13px;color:#6b7280;}
-.metric-value {font-size:28px;font-weight:bold;}
-
-.green {color:#16a34a;}
-.red {color:#dc2626;}
-.orange {color:#f59e0b;}
-
-.stDownloadButton > button {
-    background:#16a34a;
-    color:white;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================
 # SIDEBAR
 # ==============================
 st.sidebar.markdown("## REDI ADA System")
 st.sidebar.markdown("---")
 
-# 🔥 USER TYPES PROJECT (FORM UID)
 FORM_UID = st.sidebar.text_input(
     "Enter Kobo Form UID",
     value="aQJmYa6Z9mJ5qwdw8RrQcj"
@@ -67,25 +31,52 @@ FORM_UID = st.sidebar.text_input(
 page = st.sidebar.radio("Navigation", ["Dashboard", "Data Explorer", "Downloads"])
 
 # ==============================
-# FETCH DATA (CSV METHOD)
+# 🔐 TOKEN (SET IN STREAMLIT SECRETS)
+# ==============================
+try:
+    KOBO_TOKEN = st.secrets["KOBO_TOKEN"]
+except:
+    KOBO_TOKEN = None
+
+# ==============================
+# FETCH DATA (FIXED VERSION)
 # ==============================
 @st.cache_data(ttl=60)
-def fetch_data(form_uid):
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{form_uid}/data.csv"
+def fetch_data(form_uid, token):
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{form_uid}/data/"
+
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Token {token}"
 
     try:
-        df = pd.read_csv(url)
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            st.error(f"❌ API Error {response.status_code}")
+            st.error(response.text)
+            return pd.DataFrame()
+
+        data = response.json()
+
+        if "results" not in data:
+            st.warning("No 'results' field returned from API")
+            return pd.DataFrame()
+
+        df = pd.json_normalize(data["results"])
+
         st.success(f"✅ Loaded {len(df)} records")
         return df
+
     except Exception as e:
-        st.error("❌ Failed to load data. Check Form UID or permissions.")
+        st.error("❌ Failed to load data")
         st.error(str(e))
         return pd.DataFrame()
 
 # ==============================
 # LOAD DATA
 # ==============================
-df = fetch_data(FORM_UID)
+df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
     st.warning("No data available")
@@ -160,13 +151,10 @@ if page == "Dashboard":
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.markdown(f"<div class='metric-card'><div class='metric-title'>Total</div><div class='metric-value'>{total}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='metric-card'><div class='metric-title'>Valid</div><div class='metric-value green'>{valid}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='metric-card'><div class='metric-title'>Flagged</div><div class='metric-value red'>{bad}</div></div>", unsafe_allow_html=True)
-
-    color = "green" if score > 85 else "orange" if score > 60 else "red"
-
-    c4.markdown(f"<div class='metric-card'><div class='metric-title'>Score</div><div class='metric-value {color}'>{score:.1f}%</div></div>", unsafe_allow_html=True)
+    c1.metric("Total", total)
+    c2.metric("Valid", valid)
+    c3.metric("Flagged", bad)
+    c4.metric("Score", f"{score:.1f}%")
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
