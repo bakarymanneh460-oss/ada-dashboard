@@ -1,20 +1,7 @@
 import streamlit as st
 import pandas as pd
-import requests
-import os
 import io
 from datetime import datetime
-
-# ==============================
-# CONFIG
-# ==============================
-KOBO_USER = os.getenv("KOBO_USER")
-KOBO_PASS = os.getenv("KOBO_PASS")
-
-PROJECTS = {
-    "Main Survey": "aQJmYa6Z9mJ5qwdw8RrQcj"
-    # Add more forms here later
-}
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
@@ -30,7 +17,7 @@ setTimeout(function(){
 """, unsafe_allow_html=True)
 
 # ==============================
-# CSS THEME
+# CSS (POWER BI STYLE)
 # ==============================
 st.markdown("""
 <style>
@@ -58,12 +45,6 @@ section[data-testid="stSidebar"] * {
 .red {color:#dc2626;}
 .orange {color:#f59e0b;}
 
-.stButton > button {
-    background:#2563eb;
-    color:white;
-    border-radius:8px;
-}
-
 .stDownloadButton > button {
     background:#16a34a;
     color:white;
@@ -77,49 +58,29 @@ section[data-testid="stSidebar"] * {
 st.sidebar.markdown("## REDI ADA System")
 st.sidebar.markdown("---")
 
-selected_project = st.sidebar.selectbox("Select Project", list(PROJECTS.keys()))
-FORM_UID = PROJECTS[selected_project]
+# 🔥 USER TYPES PROJECT (FORM UID)
+FORM_UID = st.sidebar.text_input(
+    "Enter Kobo Form UID",
+    value="aQJmYa6Z9mJ5qwdw8RrQcj"
+)
 
 page = st.sidebar.radio("Navigation", ["Dashboard", "Data Explorer", "Downloads"])
 
 # ==============================
-# FETCH DATA (FIXED)
+# FETCH DATA (CSV METHOD)
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data(form_uid):
-    if not KOBO_USER or not KOBO_PASS:
-        st.error("❌ Kobo credentials not set in Secrets")
-        return pd.DataFrame()
-
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{form_uid}/data/?format=json"
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{form_uid}/data.csv"
 
     try:
-        res = requests.get(url, auth=(KOBO_USER, KOBO_PASS))
-
-        if res.status_code == 200:
-            data = res.json().get("results", [])
-            st.success(f"✅ Loaded {len(data)} records")
-
-            df = pd.DataFrame(data)
-
-            # 🔥 flatten nested Kobo data
-            df = pd.json_normalize(df.to_dict(orient="records"))
-
-            return df
-
-        elif res.status_code == 401:
-            st.error("❌ Invalid Kobo login")
-
-        elif res.status_code == 404:
-            st.error("❌ Wrong Form UID")
-
-        else:
-            st.error(f"❌ API Error: {res.status_code}")
-
+        df = pd.read_csv(url)
+        st.success(f"✅ Loaded {len(df)} records")
+        return df
     except Exception as e:
-        st.error(f"❌ Connection failed: {e}")
-
-    return pd.DataFrame()
+        st.error("❌ Failed to load data. Check Form UID or permissions.")
+        st.error(str(e))
+        return pd.DataFrame()
 
 # ==============================
 # LOAD DATA
@@ -170,25 +131,26 @@ bad = len(flag_df)
 score = (valid / total) * 100 if total else 0
 
 # ==============================
-# EXPORT
+# EXPORT FUNCTIONS
 # ==============================
 def export_excel():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        clean_df.to_excel(writer, sheet_name='Clean', index=False)
-        flag_df.to_excel(writer, sheet_name='Flagged', index=False)
+        clean_df.to_excel(writer, sheet_name='Clean Data', index=False)
+        flag_df.to_excel(writer, sheet_name='Flagged Data', index=False)
     return output.getvalue()
 
 def export_report():
     return f"""
-ADA REPORT
-Project: {selected_project}
-Date: {datetime.now()}
+REDI ADA SYSTEM REPORT
+Generated: {datetime.now()}
 
-Total: {total}
+Form UID: {FORM_UID}
+
+Total Records: {total}
 Valid: {valid}
 Flagged: {bad}
-Score: {score:.2f}%
+Quality Score: {score:.2f}%
 """
 
 # ==============================
@@ -209,7 +171,7 @@ if page == "Dashboard":
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
 # ==============================
-# DATA
+# DATA EXPLORER
 # ==============================
 elif page == "Data Explorer":
 
@@ -226,9 +188,17 @@ elif page == "Data Explorer":
 # ==============================
 elif page == "Downloads":
 
-    st.download_button("📊 Download Excel", export_excel(), "ADA_Data.xlsx")
+    st.download_button(
+        "📊 Download Excel (Clean + Flagged)",
+        export_excel(),
+        "ADA_Data.xlsx"
+    )
 
-    st.download_button("📄 Download Report", export_report(), "ADA_Report.txt")
+    st.download_button(
+        "📄 Download Report",
+        export_report(),
+        "ADA_Report.txt"
+    )
 
 # ==============================
 # FOOTER
