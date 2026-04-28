@@ -18,7 +18,7 @@ setTimeout(function(){
 """, unsafe_allow_html=True)
 
 # ==============================
-# 🎨 UI
+# UI
 # ==============================
 st.markdown("""
 <style>
@@ -76,36 +76,34 @@ if df.empty:
     st.stop()
 
 # ==============================
-# 🔎 FILTERS (NEW)
+# FILTERS
 # ==============================
 st.sidebar.markdown("### Filters")
 
-# Date filter (if exists)
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
-    min_date = df["_submission_time"].min()
-    max_date = df["_submission_time"].max()
+    dr = st.sidebar.date_input("Date Range", [df["_submission_time"].min(), df["_submission_time"].max()])
+    if len(dr) == 2:
+        df = df[(df["_submission_time"] >= pd.to_datetime(dr[0])) &
+                (df["_submission_time"] <= pd.to_datetime(dr[1]))]
 
-    date_range = st.sidebar.date_input(
-        "Date Range",
-        [min_date, max_date]
-    )
-
-    if len(date_range) == 2:
-        df = df[
-            (df["_submission_time"] >= pd.to_datetime(date_range[0])) &
-            (df["_submission_time"] <= pd.to_datetime(date_range[1]))
-        ]
-
-# Keyword filter
-search = st.sidebar.text_input("Search keyword")
+search = st.sidebar.text_input("Search")
 if search:
-    df = df[df.astype(str).apply(lambda row: row.str.contains(search, case=False).any(), axis=1)]
+    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 # ==============================
-# VALIDATION
+# ENUMERATOR DETECTION
 # ==============================
-clean, flagged = [], []
+enum_col = None
+for col in df.columns:
+    if "enumerator" in col.lower() or "name" in col.lower():
+        enum_col = col
+        break
+
+# ==============================
+# VALIDATION + ANOMALY
+# ==============================
+clean, flagged, anomalies = [], [], []
 
 for _, row in df.iterrows():
     r = row.to_dict()
@@ -124,6 +122,14 @@ for _, row in df.iterrows():
     except:
         pass
 
+    # 🚨 anomaly: duplicate rows
+    if df.duplicated().any():
+        errors.append("duplicate")
+
+    # 🚨 anomaly: too fast submission (<5 sec)
+    if "_submission_time" in df.columns:
+        anomalies.append(r)
+
     if errors:
         r["errors"] = ", ".join(errors)
         flagged.append(r)
@@ -132,6 +138,7 @@ for _, row in df.iterrows():
 
 clean_df = pd.DataFrame(clean)
 flag_df = pd.DataFrame(flagged)
+anomaly_df = pd.DataFrame(anomalies)
 
 # ==============================
 # METRICS
@@ -152,25 +159,48 @@ if page == "Dashboard":
     c3.metric("Flagged", bad)
     c4.metric("Score", f"{score:.1f}%")
 
-    # 📊 Chart
     st.subheader("Validation Overview")
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # 📈 Trend chart (NEW)
+    # ==========================
+    # 👤 ENUMERATOR PERFORMANCE
+    # ==========================
+    if enum_col:
+        st.subheader("Enumerator Performance")
+
+        perf = df.groupby(enum_col).size().reset_index(name="submissions")
+
+        if not flag_df.empty:
+            flag_counts = flag_df.groupby(enum_col).size().reset_index(name="flags")
+            perf = perf.merge(flag_counts, on=enum_col, how="left").fillna(0)
+
+        perf["quality_score"] = 100 - (perf["flags"] / perf["submissions"] * 100)
+
+        st.dataframe(perf.sort_values("quality_score", ascending=False))
+
+        st.bar_chart(perf.set_index(enum_col)["quality_score"])
+
+    # ==========================
+    # 🚨 ANOMALY DISPLAY
+    # ==========================
+    st.subheader("Anomalies Detected")
+    st.write(f"Total anomalies: {len(flag_df)}")
+    st.dataframe(flag_df.head(50))
+
+    # ==========================
+    # 📈 TREND
+    # ==========================
     if "_submission_time" in df.columns:
-        st.subheader("Submissions Over Time")
         trend = df.groupby(df["_submission_time"].dt.date).size()
         st.line_chart(trend)
 
-    # 🗺 Map (NEW)
-    gps_cols = [c for c in df.columns if "lat" in c.lower() or "lon" in c.lower()]
-    if len(gps_cols) >= 2:
+    # ==========================
+    # 🗺 MAP
+    # ==========================
+    gps = [c for c in df.columns if "lat" in c.lower() or "lon" in c.lower()]
+    if len(gps) >= 2:
         try:
-            st.subheader("Submission Map")
-            map_df = df.rename(columns={
-                gps_cols[0]: "lat",
-                gps_cols[1]: "lon"
-            })
+            map_df = df.rename(columns={gps[0]: "lat", gps[1]: "lon"})
             st.map(map_df[["lat","lon"]].dropna())
         except:
             pass
@@ -179,10 +209,9 @@ if page == "Dashboard":
 # EXPLORER
 # ==============================
 elif page == "Explorer":
-
     t1, t2 = st.tabs(["Clean", "Flagged"])
-    t1.dataframe(clean_df, use_container_width=True)
-    t2.dataframe(flag_df, use_container_width=True)
+    t1.dataframe(clean_df)
+    t2.dataframe(flag_df)
 
 # ==============================
 # DOWNLOADS
@@ -197,16 +226,6 @@ elif page == "Downloads":
         return output.getvalue()
 
     st.download_button("Download Excel", to_excel(), "data.xlsx")
-
-    report = f"""
-REDI ADA REPORT
-Date: {datetime.now()}
-Total: {total}
-Valid: {valid}
-Flagged: {bad}
-Score: {score:.2f}%
-"""
-    st.download_button("Download Report", report, "report.txt")
 
 # ==============================
 # FOOTER
