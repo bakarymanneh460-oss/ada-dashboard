@@ -7,30 +7,26 @@ import matplotlib.pyplot as plt
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 import base64
+import numpy as np
 
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# UI STYLE (PROFESSIONAL LOOK)
+# 🎨 UI
 # ==============================
 st.markdown("""
 <style>
 section[data-testid="stSidebar"] {
-    background-color: #2563eb !important;
+    background-color: #1e3a8a !important;
 }
 section[data-testid="stSidebar"] * {
     color: white !important;
 }
-section[data-testid="stSidebar"] label {
-    color: black !important;
-}
-section[data-testid="stSidebar"] input {
-    color: black !important;
-    background: white !important;
-}
-button {
-    font-size: 14px;
-    cursor: pointer;
+.kpi-card {
+    padding: 20px;
+    border-radius: 12px;
+    color: white;
+    text-align: center;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -38,13 +34,12 @@ button {
 # ==============================
 # SIDEBAR
 # ==============================
-st.sidebar.title("REDI ADA System")
+st.sidebar.markdown("## REDI ADA System")
+st.sidebar.caption("AI-Driven Data Quality Platform")
+
 FORM_UID = st.sidebar.text_input("Form UID", "aQJmYa6Z9mJ5qwdw8RrQcj")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
-# ==============================
-# TOKEN
-# ==============================
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 # ==============================
@@ -69,7 +64,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# DATE FILTER
+# FILTERS
 # ==============================
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"])
@@ -82,37 +77,41 @@ if "_submission_time" in df.columns:
         (df["_submission_time"] <= pd.to_datetime(end))
     ]
 
-# ==============================
-# SEARCH
-# ==============================
 search = st.sidebar.text_input("Search")
 if search:
     df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
-# ==============================
-# ENUMERATOR
-# ==============================
 enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
 
 # ==============================
-# DUPLICATES
+# 📍 GPS DETECTION
 # ==============================
-try:
-    dup_mask = df.astype(str).duplicated()
-except:
-    dup_mask = pd.Series([False]*len(df))
+lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
+lon_col = next((c for c in df.columns if "lon" in c.lower() or "long" in c.lower()), None)
 
-duplicate_indices = set(df[dup_mask].index)
+# ==============================
+# 🧠 ANOMALY DETECTION
+# ==============================
+numeric_cols = df.select_dtypes(include=["number"]).columns
+
+if len(numeric_cols) > 0:
+    z_scores = np.abs((df[numeric_cols] - df[numeric_cols].mean()) / df[numeric_cols].std())
+    df["anomaly_score"] = z_scores.max(axis=1)
+    df["anomaly_flag"] = df["anomaly_score"] > 3
+else:
+    df["anomaly_flag"] = False
 
 # ==============================
 # VALIDATION
 # ==============================
 clean, flagged = [], []
-numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
 for idx, row in df.iterrows():
     r = row.to_dict()
     errors = []
+
+    if r.get("anomaly_flag"):
+        errors.append("anomaly")
 
     if "quantity" in df.columns and "price" in df.columns:
         try:
@@ -126,16 +125,6 @@ for idx, row in df.iterrows():
                     errors.append("low_price")
                 elif unit > 50000:
                     errors.append("high_price")
-        except:
-            pass
-
-    if len(duplicate_indices) < len(df)*0.5 and idx in duplicate_indices:
-        errors.append("duplicate")
-
-    for col in numeric_cols:
-        try:
-            if float(r.get(col, 0)) > 1e9:
-                errors.append(f"extreme_{col}")
         except:
             pass
 
@@ -161,46 +150,45 @@ score = (valid / total * 100) if total else 0
 # ==============================
 if page == "Dashboard":
 
+    st.title("📊 REDI ADA Dashboard")
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
-    c2.metric("Valid", valid)
-    c3.metric("Flagged", bad)
-    c4.metric("Score", f"{score:.1f}%")
+    c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ENUMERATOR PERFORMANCE
-    if enum_col:
-        st.subheader("Enumerator Performance")
+    # ==============================
+    # MAP
+    # ==============================
+    if lat_col and lon_col:
+        st.subheader("🗺️ GPS Map")
+        st.map(df[[lat_col, lon_col]].dropna())
 
-        perf = df.groupby(enum_col).size().reset_index(name="submissions")
+        if not flag_df.empty:
+            st.subheader("⚠️ Flagged Locations")
+            st.map(flag_df[[lat_col, lon_col]].dropna())
 
-        if not flag_df.empty and enum_col in flag_df.columns:
-            flags = flag_df.groupby(enum_col).size().reset_index(name="flags")
-            perf = perf.merge(flags, on=enum_col, how="left")
-        else:
-            perf["flags"] = 0
+    # ==============================
+    # ENUMERATOR TRACKING
+    # ==============================
+    if enum_col and lat_col and lon_col:
+        st.subheader("🚶 Enumerator Tracking")
+        tracking = df.groupby(enum_col).size().reset_index(name="points")
+        st.dataframe(tracking)
 
-        perf["flags"] = perf["flags"].fillna(0)
+    # ==============================
+    # INSIGHTS
+    # ==============================
+    st.subheader("🧠 Insights")
+    if df["anomaly_flag"].sum() > 0:
+        st.warning(f"{df['anomaly_flag'].sum()} anomalies detected")
+    else:
+        st.success("No anomalies detected")
 
-        perf["quality_score"] = perf.apply(
-            lambda x: 100 if x["submissions"] == 0 else 100 - (x["flags"]/x["submissions"]*100),
-            axis=1
-        )
-
-        def highlight_row(row):
-            v = row["quality_score"]
-            if v >= 85:
-                return ["background-color:#16a34a; color:white"]*len(row)
-            elif v >= 60:
-                return ["background-color:#facc15; color:black"]*len(row)
-            else:
-                return ["background-color:#dc2626; color:white"]*len(row)
-
-        st.dataframe(perf.style.apply(highlight_row, axis=1), use_container_width=True)
-        st.bar_chart(perf.set_index(enum_col)["quality_score"])
-
-    st.subheader("Flagged Data")
+    st.subheader("⚠️ Flagged Data")
     st.dataframe(flag_df.head(50))
 
 # ==============================
@@ -212,7 +200,7 @@ elif page == "Explorer":
     t2.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS (PRO UI)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
@@ -256,11 +244,8 @@ elif page == "Downloads":
     c1, c2, c3, c4 = st.columns(4)
 
     c1.markdown(f'<a href="data:application/octet-stream;base64,{excel_b64}" download="data.xlsx"><button style="width:100%;background:#16a34a;color:white;padding:12px;border-radius:10px;">📊 Excel</button></a>', unsafe_allow_html=True)
-
     c2.markdown(f'<a href="data:text/csv;base64,{clean_b64}" download="clean.csv"><button style="width:100%;background:#2563eb;color:white;padding:12px;border-radius:10px;">📁 Clean</button></a>', unsafe_allow_html=True)
-
     c3.markdown(f'<a href="data:text/csv;base64,{flagged_b64}" download="flagged.csv"><button style="width:100%;background:#dc2626;color:white;padding:12px;border-radius:10px;">⚠️ Flagged</button></a>', unsafe_allow_html=True)
-
     c4.markdown(f'<a href="data:application/pdf;base64,{pdf_b64}" download="report.pdf"><button style="width:100%;background:#1d4ed8;color:white;padding:12px;border-radius:10px;">📄 PDF</button></a>', unsafe_allow_html=True)
 
 st.caption(f"Updated: {datetime.now()}")
