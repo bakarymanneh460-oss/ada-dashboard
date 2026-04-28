@@ -6,7 +6,7 @@ from datetime import datetime
 from spellchecker import SpellChecker
 
 # ==============================
-# 🔐 CONFIG (USE SECRETS)
+# 🔐 CONFIG (FROM SECRETS)
 # ==============================
 KOBO_TOKEN = os.getenv("KOBO_TOKEN")
 FORM_UID = "aQJmYa6Z9mJ5qwdw8RrQcj"
@@ -50,11 +50,7 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 st.sidebar.title("Navigation")
-
-page = st.sidebar.radio(
-    "Go to",
-    ["Dashboard", "Data Explorer", "Downloads"]
-)
+page = st.sidebar.radio("Go to", ["Dashboard", "Data Explorer", "Downloads"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Project Info")
@@ -120,7 +116,7 @@ def validate_numeric(row):
     return errors
 
 # ==============================
-# 🌐 FETCH DATA (AUTO REFRESH 60s)
+# 🌐 FETCH DATA (FIXED ENDPOINT)
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data():
@@ -128,11 +124,10 @@ def fetch_data():
         st.error("❌ KOBO_TOKEN not set in Secrets")
         return pd.DataFrame()
 
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/data.json"
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{FORM_UID}/data/?format=json"
 
     headers = {
         "Authorization": f"Token {KOBO_TOKEN.strip()}",
-        "Content-Type": "application/json"
     }
 
     try:
