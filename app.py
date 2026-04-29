@@ -22,7 +22,7 @@ except:
 st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
-# 🎨 UI STYLE
+# UI STYLE
 # ==============================
 st.markdown("""
 <style>
@@ -99,7 +99,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# FILTERS (RESTORED)
+# FILTERS
 # ==============================
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"], errors="coerce")
@@ -127,6 +127,29 @@ if "_submission_time" in df.columns:
     df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
 
 # ==============================
+# PANEL CONSISTENCY
+# ==============================
+if "HH_ID" in df.columns and "Month" in df.columns:
+
+    panel_flags = []
+    numeric_cols_panel = df.select_dtypes(include=["number"]).columns.tolist()
+
+    for hh, group in df.groupby("HH_ID"):
+        group = group.sort_values("Month")
+
+        for col in numeric_cols_panel:
+            vals = group[col].dropna()
+            if len(vals) >= 2:
+                change = vals.pct_change().abs()
+                if (change > 2).any():
+                    panel_flags.append(hh)
+                    break
+
+    df["panel_inconsistency"] = df["HH_ID"].isin(panel_flags)
+else:
+    df["panel_inconsistency"] = False
+
+# ==============================
 # ANOMALY DETECTION
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
@@ -138,6 +161,30 @@ if len(numeric_cols) > 0:
 else:
     df["anomaly_flag"] = False
 
+# ==============================
+# ENUMERATOR FRAUD
+# ==============================
+enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
+
+if enum_col and "_submission_time" in df.columns:
+    df = df.sort_values("_submission_time")
+    df["time_diff"] = df.groupby(enum_col)["_submission_time"].diff().dt.total_seconds()
+
+    fraud_stats = df.groupby(enum_col).agg(
+        submissions=("time_diff", "count"),
+        fast=("time_diff", lambda x: (x < 60).sum())
+    ).reset_index()
+
+    fraud_stats["fraud_score"] = (fraud_stats["fast"] / fraud_stats["submissions"]) * 100
+
+    df = df.merge(fraud_stats[[enum_col, "fraud_score"]], on=enum_col, how="left")
+    df["fraud_flag"] = df["fraud_score"] > 50
+else:
+    df["fraud_flag"] = False
+
+# ==============================
+# SPLIT
+# ==============================
 clean_df = df[~df["anomaly_flag"]]
 flag_df = df[df["anomaly_flag"]]
 
@@ -161,8 +208,16 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
+    # Alerts
+    st.subheader("🚨 Alerts")
+    if df["anomaly_flag"].sum() > 0:
+        st.error(f"⚠️ {df['anomaly_flag'].sum()} anomalies detected")
+    if df["panel_inconsistency"].sum() > 0:
+        st.error(f"🔁 {df['panel_inconsistency'].sum()} panel inconsistencies")
+    if df["fraud_flag"].sum() > 0:
+        st.error("🚨 Enumerator fraud risk detected")
 
+    # Enumerator
     if enum_col:
         st.subheader("🚶 Enumerator Performance")
         enum_df = df.groupby(enum_col)["anomaly_flag"].agg(["count","sum"]).reset_index()
@@ -170,6 +225,16 @@ if page == "Dashboard":
         st.dataframe(enum_df.sort_values("score", ascending=False))
         st.bar_chart(enum_df.set_index(enum_col)["score"])
 
+    # Regional
+    region_col = next((c for c in df.columns if "region" in c.lower() or "district" in c.lower()), None)
+    if region_col:
+        st.subheader("🗺️ Regional Performance")
+        region_df = df.groupby(region_col).agg(total=("anomaly_flag","count"), flagged=("anomaly_flag","sum")).reset_index()
+        region_df["quality_score"] = (1 - region_df["flagged"]/region_df["total"]) * 100
+        st.dataframe(region_df.sort_values("quality_score", ascending=False))
+        st.bar_chart(region_df.set_index(region_col)["quality_score"])
+
+    # Household
     if "HH_ID" in df.columns and "Month" in df.columns:
         st.subheader("🏠 Household Tracking (12-Month Index)")
         hh = df.groupby("HH_ID")["Month"].nunique().reset_index(name="months")
@@ -185,22 +250,18 @@ if page == "Dashboard":
     st.dataframe(flag_df.head(50))
 
 # ==============================
-# EXPLORER (RESTORED)
+# EXPLORER
 # ==============================
 elif page == "Explorer":
-
     st.title("🔍 Data Explorer")
-
     tab1, tab2 = st.tabs(["✅ Clean Data", "⚠️ Flagged Data"])
-
     with tab1:
         st.dataframe(clean_df)
-
     with tab2:
         st.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS (RESTORED)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
@@ -218,7 +279,6 @@ elif page == "Downloads":
         doc = SimpleDocTemplate(buffer)
         styles = getSampleStyleSheet()
         content = []
-
         content.append(Paragraph("REDI DATA QUALITY REPORT", styles["Title"]))
         content.append(Spacer(1, 10))
         content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
@@ -247,11 +307,8 @@ elif page == "Downloads":
     c1, c2, c3, c4 = st.columns(4)
 
     c1.markdown(f'<a href="data:application/octet-stream;base64,{excel_b64}" download="redi_full.xlsx"><button style="width:100%;background:#16a34a;color:white;padding:12px;border-radius:10px;">📊 Full Excel</button></a>', unsafe_allow_html=True)
-
     c2.markdown(f'<a href="data:text/csv;base64,{clean_b64}" download="clean.csv"><button style="width:100%;background:#22c55e;color:white;padding:12px;border-radius:10px;">✅ Clean</button></a>', unsafe_allow_html=True)
-
     c3.markdown(f'<a href="data:text/csv;base64,{flagged_b64}" download="flagged.csv"><button style="width:100%;background:#dc2626;color:white;padding:12px;border-radius:10px;">⚠️ Flagged</button></a>', unsafe_allow_html=True)
-
     c4.markdown(f'<a href="data:application/pdf;base64,{pdf_b64}" download="report.pdf"><button style="width:100%;background:#1d4ed8;color:white;padding:12px;border-radius:10px;">📄 PDF</button></a>', unsafe_allow_html=True)
 
 st.caption(f"Updated: {datetime.now()}")
