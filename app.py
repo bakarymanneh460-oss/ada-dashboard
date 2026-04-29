@@ -215,18 +215,33 @@ if page=="Dashboard":
         st.dataframe(hh_tracking)
 
 # ==============================
-# DOWNLOADS
+# DOWNLOADS (FIXED)
 # ==============================
 elif page=="Downloads":
 
     st.title("Downloads")
 
-    def to_excel():
-        o=io.BytesIO()
-        with pd.ExcelWriter(o,engine="openpyxl") as w:
-            clean_df.to_excel(w,index=False,sheet_name="Clean")
-            flag_df.to_excel(w,index=False,sheet_name="Flagged")
-        return o.getvalue()
+    def full_excel():
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            clean_df.to_excel(writer, index=False, sheet_name="Clean")
+            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
+        buffer.seek(0)
+        return buffer
+
+    def clean_excel():
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            clean_df.to_excel(writer, index=False)
+        buffer.seek(0)
+        return buffer
+
+    def flagged_excel():
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            flag_df.to_excel(writer, index=False)
+        buffer.seek(0)
+        return buffer
 
     def pdf():
         buf=io.BytesIO()
@@ -249,15 +264,15 @@ elif page=="Downloads":
 
     with col1:
         st.markdown('<div class="btn-green">📊 Full Excel</div>',unsafe_allow_html=True)
-        st.download_button("",to_excel(),"redi_full.xlsx")
+        st.download_button("",full_excel(),"redi_full.xlsx")
 
     with col2:
         st.markdown('<div class="btn-green">✅ Clean Excel</div>',unsafe_allow_html=True)
-        st.download_button("",clean_df.to_excel(index=False),"clean.xlsx")
+        st.download_button("",clean_excel(),"clean.xlsx")
 
     with col3:
         st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>',unsafe_allow_html=True)
-        st.download_button("",flag_df.to_excel(index=False),"flagged.xlsx")
+        st.download_button("",flagged_excel(),"flagged.xlsx")
 
     with col4:
         st.markdown('<div class="btn-green">📄 PDF Report</div>',unsafe_allow_html=True)
