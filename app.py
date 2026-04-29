@@ -3,10 +3,14 @@ import pandas as pd
 import io
 import requests
 from datetime import datetime
+import matplotlib.pyplot as plt
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+import base64
 import numpy as np
 
 # ==============================
-# SAFE DB IMPORT (NO CRASH)
+# SAFE DB IMPORT
 # ==============================
 try:
     from sqlalchemy import create_engine
@@ -18,9 +22,38 @@ except:
 st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
+# 🎨 UI STYLE (RESTORED)
+# ==============================
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] {
+    background-color: #1e3a8a !important;
+}
+section[data-testid="stSidebar"] * {
+    color: white !important;
+}
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    background-color: white !important;
+    color: black !important;
+}
+section[data-testid="stSidebar"] div[data-baseweb="input"] input {
+    color: black !important;
+}
+.kpi-card {
+    padding: 20px;
+    border-radius: 12px;
+    color: white;
+    text-align: center;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================
 # SIDEBAR
 # ==============================
 st.sidebar.markdown("## 📊 REDI Data Quality System")
+st.sidebar.caption("Field Data Quality & Monitoring Tool")
 
 FORM_UID = st.sidebar.text_input("Form UID", "")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
@@ -33,19 +66,18 @@ else:
     st.sidebar.info("🟡 Using Kobo API")
 
 # ==============================
-# MANUAL REFRESH (SAFE)
+# 🔄 MANUAL REFRESH
 # ==============================
 if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 
 # ==============================
-# FETCH DATA (DB FIRST, KOBO FALLBACK)
+# FETCH DATA
 # ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
 
-    # Try DB first
     if engine:
         try:
             df = pd.read_sql("SELECT * FROM clean_data", engine)
@@ -54,7 +86,6 @@ def fetch_data(uid, token):
         except:
             pass
 
-    # Kobo fallback
     if not uid:
         return pd.DataFrame()
 
@@ -83,7 +114,7 @@ if "_submission_time" in df.columns:
     df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
 
 # ==============================
-# ANOMALY DETECTION (SAFE)
+# ANOMALY DETECTION
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
 
@@ -94,9 +125,6 @@ if len(numeric_cols) > 0:
 else:
     df["anomaly_flag"] = False
 
-# ==============================
-# SPLIT
-# ==============================
 clean_df = df[~df["anomaly_flag"]]
 flag_df = df[df["anomaly_flag"]]
 
@@ -113,62 +141,41 @@ if page == "Dashboard":
     st.title("📊 REDI Data Quality Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
-    c2.metric("Valid", valid)
-    c3.metric("Flagged", bad)
-    c4.metric("Quality Score", f"{score:.1f}%")
+    c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # ==========================
-    # ENUMERATOR PERFORMANCE
-    # ==========================
+    # Enumerator
     enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
-
     if enum_col:
-        st.subheader("🧑‍💼 Enumerator Performance")
+        st.subheader("🚶 Enumerator Performance")
 
         enum_df = df.groupby(enum_col)["anomaly_flag"].agg(["count","sum"]).reset_index()
         enum_df["score"] = (1 - enum_df["sum"] / enum_df["count"]) * 100
-        enum_df["score"] = enum_df["score"].clip(0,100)
 
         st.dataframe(enum_df.sort_values("score", ascending=False))
         st.bar_chart(enum_df.set_index(enum_col)["score"])
 
-    # ==========================
-    # HOUSEHOLD TRACKING
-    # ==========================
+    # Household tracking
     if "HH_ID" in df.columns and "Month" in df.columns:
-
-        st.subheader("🏠 Household 12-Month Completeness")
+        st.subheader("🏠 Household Tracking")
 
         hh = df.groupby("HH_ID")["Month"].nunique().reset_index(name="months")
         hh["completeness_%"] = (hh["months"] / 12) * 100
 
-        def status(m):
-            if m == 12:
-                return "Complete"
-            elif m >= 6:
-                return "Partial"
-            else:
-                return "Low"
-
-        hh["status"] = hh["months"].apply(status)
-
         st.dataframe(hh.sort_values("completeness_%", ascending=False))
-        st.bar_chart(hh["status"].value_counts())
+        st.bar_chart(hh["months"])
 
-    # ==========================
-    # MONTHLY TREND
-    # ==========================
+    # Monthly
     if "Month" in df.columns:
-        st.subheader("📅 Monthly Submissions")
+        st.subheader("📅 Monthly Trend")
         st.line_chart(df.groupby("Month").size())
 
-    # ==========================
-    # FLAGGED DATA
-    # ==========================
-    st.subheader("⚠️ Flagged Data Sample")
+    # Flagged
+    st.subheader("⚠️ Flagged Data")
     st.dataframe(flag_df.head(50))
 
 # ==============================
@@ -182,9 +189,9 @@ elif page == "Explorer":
 # ==============================
 elif page == "Downloads":
 
-    st.subheader("Download Data")
+    st.subheader("Download Center")
 
     st.download_button("📁 Clean CSV", clean_df.to_csv(index=False), "clean.csv")
     st.download_button("⚠️ Flagged CSV", flag_df.to_csv(index=False), "flagged.csv")
 
-st.caption(f"Last updated: {datetime.now()}")
+st.caption(f"Updated: {datetime.now()}")
