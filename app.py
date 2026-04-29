@@ -8,42 +8,33 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 import base64
 import numpy as np
+from sqlalchemy import create_engine
 
 st.set_page_config(page_title="REDI Data Quality System", layout="wide")
+
+# ==============================
+# DB (SAFE ADD)
+# ==============================
+DB_URL = st.secrets.get("DATABASE_URL", None)
+engine = create_engine(DB_URL) if DB_URL else None
 
 # ==============================
 # UI
 # ==============================
 st.markdown("""
 <style>
-section[data-testid="stSidebar"] {
-    background-color: #1e3a8a !important;
-}
-
+section[data-testid="stSidebar"] { background-color: #1e3a8a !important; }
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3,
-section[data-testid="stSidebar"] p {
-    color: white !important;
-}
-
+section[data-testid="stSidebar"] p { color: white !important; }
 section[data-testid="stSidebar"] input,
 section[data-testid="stSidebar"] textarea {
-    background-color: white !important;
-    color: black !important;
+    background-color: white !important; color: black !important;
 }
-
-section[data-testid="stSidebar"] div[data-baseweb="input"] input {
-    color: black !important;
-}
-
-.kpi-card {
-    padding: 20px;
-    border-radius: 12px;
-    color: white;
-    text-align: center;
-}
+section[data-testid="stSidebar"] div[data-baseweb="input"] input { color: black !important; }
+.kpi-card { padding: 20px; border-radius: 12px; color: white; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,16 +44,32 @@ section[data-testid="stSidebar"] div[data-baseweb="input"] input {
 st.sidebar.markdown("## 📊 REDI Data Quality System")
 st.sidebar.caption("Field Data Quality & Monitoring Tool")
 
+if engine:
+    st.sidebar.success("🟢 Database connected")
+else:
+    st.sidebar.info("🟡 Using Kobo API")
+
 FORM_UID = st.sidebar.text_input("Form UID", "aQJmYa6Z9mJ5qwdw8RrQcj")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 # ==============================
-# FETCH DATA
+# FETCH DATA (SAFE HYBRID)
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data(uid, token):
+
+    # Try DB first
+    if engine:
+        try:
+            df = pd.read_sql("SELECT * FROM clean_data", engine)
+            if not df.empty:
+                return df
+        except:
+            pass
+
+    # Fallback to Kobo
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
     headers = {"Authorization": f"Token {token}"} if token else {}
     r = requests.get(url, headers=headers)
@@ -93,8 +100,6 @@ if "_submission_time" in df.columns:
         (df["_submission_time"] <= pd.to_datetime(end))
     ]
 
-# Month feature
-if "_submission_time" in df.columns:
     df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
 
 search = st.sidebar.text_input("Search")
@@ -103,17 +108,17 @@ if search:
 
 enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
 
-# GPS
 lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
 lon_col = next((c for c in df.columns if "lon" in c.lower() or "long" in c.lower()), None)
 
 # ==============================
-# ANOMALY DETECTION
+# ANOMALY DETECTION (FIXED)
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
 
 if len(numeric_cols) > 0:
-    z_scores = np.abs((df[numeric_cols] - df[numeric_cols].mean()) / df[numeric_cols].std())
+    std = df[numeric_cols].std().replace(0, 1)
+    z_scores = np.abs((df[numeric_cols] - df[numeric_cols].mean()) / std)
     df["anomaly_score"] = z_scores.max(axis=1)
     df["anomaly_flag"] = df["anomaly_score"] > 3
 else:
@@ -178,7 +183,7 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # Monthly trends
+    # Monthly
     if "Month" in df.columns:
         st.subheader("📅 Monthly Submissions Trend")
         st.line_chart(df.groupby("Month").size())
@@ -186,19 +191,13 @@ if page == "Dashboard":
         st.subheader("⚠️ Monthly Anomalies")
         st.bar_chart(df.groupby("Month")["anomaly_flag"].sum())
 
+    # GPS
     if lat_col and lon_col:
         st.subheader("🗺️ GPS Map")
         st.map(df[[lat_col, lon_col]].dropna())
 
-        if not flag_df.empty:
-            st.subheader("⚠️ Flagged Locations")
-            st.map(flag_df[[lat_col, lon_col]].dropna())
-
+    # Enumerator
     if enum_col:
-        st.subheader("🚶 Enumerator Tracking")
-        st.dataframe(df.groupby(enum_col).size().reset_index(name="points"))
-
-        # Enumerator performance
         st.subheader("🚶 Enumerator Performance Scoring")
 
         enum_group = df.groupby(enum_col).agg(
@@ -206,60 +205,61 @@ if page == "Dashboard":
             flagged=("anomaly_flag", "sum")
         ).reset_index()
 
-        enum_group["flag_rate"] = enum_group["flagged"] / enum_group["total_submissions"]
+        enum_group["flag_rate"] = enum_group["flagged"] / enum_group["total_submissions"].replace(0, 1)
         enum_group["score"] = (1 - enum_group["flag_rate"]) * 100
+        enum_group["score"] = enum_group["score"].clip(lower=0)
 
         st.dataframe(enum_group.sort_values("score", ascending=False))
         st.bar_chart(enum_group.set_index(enum_col)["score"])
 
-    st.subheader("🧠 Insights")
-    if df["anomaly_flag"].sum() > 0:
-        st.warning(f"{df['anomaly_flag'].sum()} anomalies detected")
-    else:
-        st.success("No anomalies detected")
-
-    # Variable analysis
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    if len(numeric_cols) > 0:
-        st.subheader("📊 Variable Analysis")
-        selected_var = st.selectbox("Select variable", numeric_cols)
-
-        if "Month" in df.columns:
-            st.line_chart(df.groupby("Month")[selected_var].mean())
-
-        st.bar_chart(df[selected_var].value_counts().head(20))
-
-    # Qualitative analysis
-    st.subheader("📝 Qualitative & Categorical Insights")
-    cat_cols = df.select_dtypes(include=["object"]).columns.tolist()
-    exclude_cols = ["_id", "_uuid", "_submission_time"]
-    cat_cols = [c for c in cat_cols if c not in exclude_cols]
-
-    if len(cat_cols) > 0:
-        selected_cat = st.selectbox("Select categorical variable", cat_cols)
-        freq = df[selected_cat].value_counts().head(20)
-
-        st.write("Top responses:")
-        st.dataframe(freq)
-        st.bar_chart(freq)
-
-        avg_len = df[selected_cat].dropna().astype(str).str.len().mean()
-        if avg_len > 40:
-            st.subheader("🧠 Open-ended Response Preview")
-            st.write(df[selected_cat].dropna().sample(min(5, len(df))))
-    else:
-        st.info("No categorical/text variables detected.")
-
-    # Household tracking
+    # ==============================
+    # 🏠 HOUSEHOLD TRACKING (NEW)
+    # ==============================
     if "HH_ID" in df.columns and "Month" in df.columns:
+
         st.subheader("🏠 Household Panel Coverage")
-        hh_months = df.groupby("HH_ID")["Month"].nunique()
-        st.write("Average months per household:", round(hh_months.mean(), 2))
 
-        incomplete = hh_months[hh_months < 12]
+        hh_months = df.groupby("HH_ID")["Month"].nunique().rename("months_covered")
+        hh_total = df.groupby("HH_ID").size().rename("total_records")
+
+        hh_df = pd.concat([hh_months, hh_total], axis=1).reset_index()
+
+        hh_df["completeness_%"] = (hh_df["months_covered"] / 12) * 100
+        hh_df["completeness_%"] = hh_df["completeness_%"].clip(0, 100)
+
+        def classify(m):
+            if m == 12:
+                return "🟢 Complete"
+            elif m >= 6:
+                return "🟡 Partial"
+            else:
+                return "🔴 Low"
+
+        hh_df["status"] = hh_df["months_covered"].apply(classify)
+
+        avg_completion = hh_df["completeness_%"].mean()
+        full = (hh_df["months_covered"] == 12).sum()
+        partial = ((hh_df["months_covered"] >= 6) & (hh_df["months_covered"] < 12)).sum()
+        low = (hh_df["months_covered"] < 6).sum()
+
+        st.write(f"Average completeness: {avg_completion:.1f}%")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🟢 Complete (12m)", full)
+        c2.metric("🟡 Partial (6–11m)", partial)
+        c3.metric("🔴 Low (<6m)", low)
+
+        st.subheader("📊 Household Completion Distribution")
+        st.bar_chart(hh_df["status"].value_counts())
+
+        st.subheader("📋 Household Tracking Table")
+        st.dataframe(hh_df.sort_values("completeness_%", ascending=False))
+
+        incomplete = hh_df[hh_df["months_covered"] < 12]
         if len(incomplete) > 0:
-            st.warning(f"{len(incomplete)} households have incomplete monthly data")
+            st.warning(f"{len(incomplete)} households have incomplete panel data")
 
+    # Flagged
     st.subheader("⚠️ Flagged Data")
     st.dataframe(flag_df.head(50))
 
