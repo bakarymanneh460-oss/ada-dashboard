@@ -22,7 +22,7 @@ except:
 st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
-# 🎨 UI STYLE (RESTORED)
+# 🎨 UI STYLE
 # ==============================
 st.markdown("""
 <style>
@@ -32,12 +32,8 @@ section[data-testid="stSidebar"] {
 section[data-testid="stSidebar"] * {
     color: white !important;
 }
-section[data-testid="stSidebar"] input,
-section[data-testid="stSidebar"] textarea {
+section[data-testid="stSidebar"] input {
     background-color: white !important;
-    color: black !important;
-}
-section[data-testid="stSidebar"] div[data-baseweb="input"] input {
     color: black !important;
 }
 .kpi-card {
@@ -53,7 +49,7 @@ section[data-testid="stSidebar"] div[data-baseweb="input"] input {
 # SIDEBAR
 # ==============================
 st.sidebar.markdown("## 📊 REDI Data Quality System")
-st.sidebar.caption("Field Data Quality & Monitoring Tool")
+st.sidebar.caption("Field Data Quality Monitoring Tool")
 
 FORM_UID = st.sidebar.text_input("Form UID", "")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
@@ -65,9 +61,6 @@ if engine:
 else:
     st.sidebar.info("🟡 Using Kobo API")
 
-# ==============================
-# 🔄 MANUAL REFRESH
-# ==============================
 if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
@@ -77,7 +70,6 @@ if st.sidebar.button("🔄 Refresh Data"):
 # ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
-
     if engine:
         try:
             df = pd.read_sql("SELECT * FROM clean_data", engine)
@@ -107,10 +99,31 @@ if df.empty:
     st.stop()
 
 # ==============================
-# PREP
+# FILTERS (RESTORED)
 # ==============================
 if "_submission_time" in df.columns:
     df["_submission_time"] = pd.to_datetime(df["_submission_time"], errors="coerce")
+
+    min_date = df["_submission_time"].min()
+    max_date = df["_submission_time"].max()
+
+    c1, c2 = st.sidebar.columns(2)
+    start_date = c1.date_input("Start Date", min_date)
+    end_date = c2.date_input("End Date", max_date)
+
+    df = df[
+        (df["_submission_time"] >= pd.to_datetime(start_date)) &
+        (df["_submission_time"] <= pd.to_datetime(end_date))
+    ]
+
+search = st.sidebar.text_input("🔍 Search data")
+if search:
+    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False).any(), axis=1)]
+
+# ==============================
+# PREP
+# ==============================
+if "_submission_time" in df.columns:
     df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
 
 # ==============================
@@ -148,50 +161,97 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
-    # Enumerator
     enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
+
     if enum_col:
         st.subheader("🚶 Enumerator Performance")
-
         enum_df = df.groupby(enum_col)["anomaly_flag"].agg(["count","sum"]).reset_index()
         enum_df["score"] = (1 - enum_df["sum"] / enum_df["count"]) * 100
-
         st.dataframe(enum_df.sort_values("score", ascending=False))
         st.bar_chart(enum_df.set_index(enum_col)["score"])
 
-    # Household tracking
     if "HH_ID" in df.columns and "Month" in df.columns:
-        st.subheader("🏠 Household Tracking")
-
+        st.subheader("🏠 Household Tracking (12-Month Index)")
         hh = df.groupby("HH_ID")["Month"].nunique().reset_index(name="months")
         hh["completeness_%"] = (hh["months"] / 12) * 100
-
         st.dataframe(hh.sort_values("completeness_%", ascending=False))
         st.bar_chart(hh["months"])
 
-    # Monthly
     if "Month" in df.columns:
         st.subheader("📅 Monthly Trend")
         st.line_chart(df.groupby("Month").size())
 
-    # Flagged
     st.subheader("⚠️ Flagged Data")
     st.dataframe(flag_df.head(50))
 
 # ==============================
-# EXPLORER
+# EXPLORER (RESTORED)
 # ==============================
 elif page == "Explorer":
-    st.dataframe(df)
+
+    st.title("🔍 Data Explorer")
+
+    tab1, tab2 = st.tabs(["✅ Clean Data", "⚠️ Flagged Data"])
+
+    with tab1:
+        st.dataframe(clean_df)
+
+    with tab2:
+        st.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS
+# DOWNLOADS (RESTORED)
 # ==============================
 elif page == "Downloads":
 
-    st.subheader("Download Center")
+    st.subheader("📥 Download Center")
 
-    st.download_button("📁 Clean CSV", clean_df.to_csv(index=False), "clean.csv")
-    st.download_button("⚠️ Flagged CSV", flag_df.to_csv(index=False), "flagged.csv")
+    def to_excel():
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            clean_df.to_excel(writer, index=False, sheet_name="Clean")
+            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
+        return output.getvalue()
+
+    def to_pdf():
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+        content = []
+
+        content.append(Paragraph("REDI DATA QUALITY REPORT", styles["Title"]))
+        content.append(Spacer(1, 10))
+        content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
+        content.append(Paragraph(f"Total: {total}", styles["Normal"]))
+        content.append(Paragraph(f"Valid: {valid}", styles["Normal"]))
+        content.append(Paragraph(f"Flagged: {bad}", styles["Normal"]))
+        content.append(Paragraph(f"Score: {score:.2f}%", styles["Normal"]))
+
+        fig = plt.figure()
+        plt.bar(["Valid","Flagged"], [valid,bad])
+        img = io.BytesIO()
+        plt.savefig(img, format="png")
+        plt.close(fig)
+        img.seek(0)
+
+        content.append(Image(img, width=400, height=250))
+        doc.build(content)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    excel_b64 = base64.b64encode(to_excel()).decode()
+    pdf_b64 = base64.b64encode(to_pdf()).decode()
+    clean_b64 = base64.b64encode(clean_df.to_csv(index=False).encode()).decode()
+    flagged_b64 = base64.b64encode(flag_df.to_csv(index=False).encode()).decode()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.markdown(f'<a href="data:application/octet-stream;base64,{excel_b64}" download="redi_full.xlsx"><button style="width:100%;background:#16a34a;color:white;padding:12px;border-radius:10px;">📊 Full Excel</button></a>', unsafe_allow_html=True)
+
+    c2.markdown(f'<a href="data:text/csv;base64,{clean_b64}" download="clean.csv"><button style="width:100%;background:#22c55e;color:white;padding:12px;border-radius:10px;">✅ Clean</button></a>', unsafe_allow_html=True)
+
+    c3.markdown(f'<a href="data:text/csv;base64,{flagged_b64}" download="flagged.csv"><button style="width:100%;background:#dc2626;color:white;padding:12px;border-radius:10px;">⚠️ Flagged</button></a>', unsafe_allow_html=True)
+
+    c4.markdown(f'<a href="data:application/pdf;base64,{pdf_b64}" download="report.pdf"><button style="width:100%;background:#1d4ed8;color:white;padding:12px;border-radius:10px;">📄 PDF</button></a>', unsafe_allow_html=True)
 
 st.caption(f"Updated: {datetime.now()}")
