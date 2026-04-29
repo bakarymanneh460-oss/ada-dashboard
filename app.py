@@ -10,174 +10,151 @@ import base64
 import numpy as np
 
 # ==============================
-# SAFE DB IMPORT
+# CONFIG
 # ==============================
-try:
-    from sqlalchemy import create_engine
-    DB_URL = st.secrets.get("DATABASE_URL", None)
-    engine = create_engine(DB_URL) if DB_URL else None
-except:
-    engine = None
-
-st.set_page_config(page_title="REDI Data Quality System", layout="wide")
+st.set_page_config(page_title="REDI Universal Data System", layout="wide")
 
 # ==============================
-# UI STYLE
+# STYLE
 # ==============================
 st.markdown("""
 <style>
-section[data-testid="stSidebar"] {
-    background-color: #1e3a8a !important;
-}
-section[data-testid="stSidebar"] * {
-    color: white !important;
-}
-section[data-testid="stSidebar"] input {
-    background-color: white !important;
-    color: black !important;
-}
-.kpi-card {
-    padding: 20px;
-    border-radius: 12px;
-    color: white;
-    text-align: center;
-}
+section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
+section[data-testid="stSidebar"] * {color:white !important;}
+section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
+.kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================
 # SIDEBAR
 # ==============================
-st.sidebar.markdown("## 📊 REDI Data Quality System")
-st.sidebar.caption("Field Data Quality Monitoring Tool")
-
-FORM_UID = st.sidebar.text_input("Form UID", "")
+st.sidebar.title("📊 REDI Universal System")
+FORM_UID = st.sidebar.text_input("Form UID")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-if engine:
-    st.sidebar.success("🟢 Database connected")
-else:
-    st.sidebar.info("🟡 Using Kobo API")
-
-if st.sidebar.button("🔄 Refresh Data"):
+if st.sidebar.button("🔄 Refresh"):
     st.cache_data.clear()
     st.rerun()
 
 # ==============================
-# FETCH DATA
+# FETCH (FIXED PAGINATION)
 # ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
-    if engine:
-        try:
-            df = pd.read_sql("SELECT * FROM clean_data", engine)
-            if not df.empty:
-                return df
-        except:
-            pass
-
     if not uid:
         return pd.DataFrame()
 
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
     headers = {"Authorization": f"Token {token}"} if token else {}
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    try:
-        r = requests.get(url, headers=headers)
-        if r.status_code != 200:
-            return pd.DataFrame()
-        return pd.json_normalize(r.json().get("results", []))
-    except:
-        return pd.DataFrame()
+    all_data = []
+
+    while url:
+        try:
+            r = requests.get(url, headers=headers)
+            if r.status_code != 200:
+                break
+
+            data = r.json()
+            all_data.extend(data.get("results", []))
+            url = data.get("next")
+        except:
+            break
+
+    return pd.json_normalize(all_data)
 
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data available")
+    st.warning("No data found")
     st.stop()
+
+# ==============================
+# SMART DETECTION
+# ==============================
+def detect(names):
+    for col in df.columns:
+        for n in names:
+            if n in col.lower():
+                return col
+    return None
+
+DATE_COL = detect(["submission_time", "date", "time"])
+HH_COL = detect(["hh", "household", "id"])
+ENUM_COL = detect(["enum", "enumerator", "name", "user"])
+REGION_COL = detect(["region", "district", "area"])
+
+if "_submission_time" in df.columns:
+    DATE_COL = "_submission_time"
+
+if DATE_COL:
+    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # ==============================
 # FILTERS
 # ==============================
-if "_submission_time" in df.columns:
-    df["_submission_time"] = pd.to_datetime(df["_submission_time"], errors="coerce")
-
-    min_date = df["_submission_time"].min()
-    max_date = df["_submission_time"].max()
-
+if DATE_COL:
     c1, c2 = st.sidebar.columns(2)
-    start_date = c1.date_input("Start Date", min_date)
-    end_date = c2.date_input("End Date", max_date)
+    start = c1.date_input("Start", df[DATE_COL].min())
+    end = c2.date_input("End", df[DATE_COL].max())
 
-    df = df[
-        (df["_submission_time"] >= pd.to_datetime(start_date)) &
-        (df["_submission_time"] <= pd.to_datetime(end_date))
-    ]
+    df = df[(df[DATE_COL] >= pd.to_datetime(start)) & (df[DATE_COL] <= pd.to_datetime(end))]
 
-search = st.sidebar.text_input("🔍 Search data")
+search = st.sidebar.text_input("Search")
 if search:
     df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False).any(), axis=1)]
 
 # ==============================
 # PREP
 # ==============================
-if "_submission_time" in df.columns:
-    df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
+if DATE_COL:
+    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
 # ==============================
-# PANEL CONSISTENCY
+# ANOMALY
 # ==============================
-if "HH_ID" in df.columns and "Month" in df.columns:
-
-    panel_flags = []
-    numeric_cols_panel = df.select_dtypes(include=["number"]).columns.tolist()
-
-    for hh, group in df.groupby("HH_ID"):
-        group = group.sort_values("Month")
-
-        for col in numeric_cols_panel:
-            vals = group[col].dropna()
-            if len(vals) >= 2:
-                change = vals.pct_change().abs()
-                if (change > 2).any():
-                    panel_flags.append(hh)
-                    break
-
-    df["panel_inconsistency"] = df["HH_ID"].isin(panel_flags)
-else:
-    df["panel_inconsistency"] = False
-
-# ==============================
-# ANOMALY DETECTION
-# ==============================
-numeric_cols = df.select_dtypes(include=["number"]).columns
-
-if len(numeric_cols) > 0:
-    std = df[numeric_cols].std().replace(0, 1)
-    z = np.abs((df[numeric_cols] - df[numeric_cols].mean()) / std)
+num_cols = df.select_dtypes(include=["number"]).columns
+if len(num_cols) > 0:
+    std = df[num_cols].std().replace(0,1)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
     df["anomaly_flag"] = z.max(axis=1) > 3
 else:
     df["anomaly_flag"] = False
 
 # ==============================
-# ENUMERATOR FRAUD
+# PANEL
 # ==============================
-enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
+if HH_COL and "Month" in df.columns:
+    flags = []
+    for hh, g in df.groupby(HH_COL):
+        g = g.sort_values("Month")
+        for col in num_cols:
+            vals = g[col].dropna()
+            if len(vals) >= 2 and (vals.pct_change().abs() > 2).any():
+                flags.append(hh)
+                break
+    df["panel_inconsistency"] = df[HH_COL].isin(flags)
+else:
+    df["panel_inconsistency"] = False
 
-if enum_col and "_submission_time" in df.columns:
-    df = df.sort_values("_submission_time")
-    df["time_diff"] = df.groupby(enum_col)["_submission_time"].diff().dt.total_seconds()
+# ==============================
+# FRAUD
+# ==============================
+if ENUM_COL and DATE_COL:
+    df = df.sort_values(DATE_COL)
+    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
 
-    fraud_stats = df.groupby(enum_col).agg(
-        submissions=("time_diff", "count"),
+    f = df.groupby(ENUM_COL).agg(
+        total=("time_diff","count"),
         fast=("time_diff", lambda x: (x < 60).sum())
     ).reset_index()
 
-    fraud_stats["fraud_score"] = (fraud_stats["fast"] / fraud_stats["submissions"]) * 100
+    f["fraud_score"] = ((f["fast"]/f["total"]).fillna(0)*100).clip(upper=100)
 
-    df = df.merge(fraud_stats[[enum_col, "fraud_score"]], on=enum_col, how="left")
+    df = df.merge(f[[ENUM_COL,"fraud_score"]], on=ENUM_COL, how="left")
     df["fraud_flag"] = df["fraud_score"] > 50
 else:
     df["fraud_flag"] = False
@@ -191,124 +168,77 @@ flag_df = df[df["anomaly_flag"]]
 total = len(df)
 valid = len(clean_df)
 bad = len(flag_df)
-score = (valid / total * 100) if total else 0
+score = (valid/total*100) if total else 0
 
 # ==============================
 # DASHBOARD
 # ==============================
 if page == "Dashboard":
 
-    st.title("📊 REDI Data Quality Dashboard")
+    st.title("📊 REDI Universal Dashboard")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1,c2,c3,c4 = st.columns(4)
     c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
-    st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
+    st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
 
     # Alerts
     st.subheader("🚨 Alerts")
-    if df["anomaly_flag"].sum() > 0:
-        st.error(f"⚠️ {df['anomaly_flag'].sum()} anomalies detected")
-    if df["panel_inconsistency"].sum() > 0:
-        st.error(f"🔁 {df['panel_inconsistency'].sum()} panel inconsistencies")
-    if df["fraud_flag"].sum() > 0:
-        st.error("🚨 Enumerator fraud risk detected")
+    if df["anomaly_flag"].sum()>0: st.error(f"{df['anomaly_flag'].sum()} anomalies")
+    if df["panel_inconsistency"].sum()>0: st.error("Panel issues detected")
+    if df["fraud_flag"].sum()>0: st.error("Fraud risk detected")
 
     # Enumerator
-    if enum_col:
-        st.subheader("🚶 Enumerator Performance")
-        enum_df = df.groupby(enum_col)["anomaly_flag"].agg(["count","sum"]).reset_index()
-        enum_df["score"] = (1 - enum_df["sum"] / enum_df["count"]) * 100
-        st.dataframe(enum_df.sort_values("score", ascending=False))
-        st.bar_chart(enum_df.set_index(enum_col)["score"])
+    if ENUM_COL:
+        st.subheader("Enumerator Performance")
+        e = df.groupby(ENUM_COL)["anomaly_flag"].agg(["count","sum"]).reset_index()
+        e["score"] = (1 - e["sum"]/e["count"])*100
+        st.dataframe(e.sort_values("score",ascending=False))
 
-    # Regional
-    region_col = next((c for c in df.columns if "region" in c.lower() or "district" in c.lower()), None)
-    if region_col:
-        st.subheader("🗺️ Regional Performance")
-        region_df = df.groupby(region_col).agg(total=("anomaly_flag","count"), flagged=("anomaly_flag","sum")).reset_index()
-        region_df["quality_score"] = (1 - region_df["flagged"]/region_df["total"]) * 100
-        st.dataframe(region_df.sort_values("quality_score", ascending=False))
-        st.bar_chart(region_df.set_index(region_col)["quality_score"])
+    # Region
+    if REGION_COL:
+        st.subheader("Regional Performance")
+        r = df.groupby(REGION_COL)["anomaly_flag"].agg(["count","sum"]).reset_index()
+        r["score"] = (1 - r["sum"]/r["count"])*100
+        st.dataframe(r)
 
     # Household
-    if "HH_ID" in df.columns and "Month" in df.columns:
-        st.subheader("🏠 Household Tracking (12-Month Index)")
-        hh = df.groupby("HH_ID")["Month"].nunique().reset_index(name="months")
-        hh["completeness_%"] = (hh["months"] / 12) * 100
-        st.dataframe(hh.sort_values("completeness_%", ascending=False))
-        st.bar_chart(hh["months"])
+    if HH_COL and "Month" in df.columns:
+        st.subheader("Household Tracking")
+        hh = df.groupby(HH_COL)["Month"].nunique().reset_index(name="months")
+        hh["completeness"] = ((hh["months"]/12)*100).clip(upper=100)
+        st.dataframe(hh)
 
     if "Month" in df.columns:
-        st.subheader("📅 Monthly Trend")
+        st.subheader("Monthly Trend")
         st.line_chart(df.groupby("Month").size())
-
-    st.subheader("⚠️ Flagged Data")
-    st.dataframe(flag_df.head(50))
 
 # ==============================
 # EXPLORER
 # ==============================
-elif page == "Explorer":
-    st.title("🔍 Data Explorer")
-    tab1, tab2 = st.tabs(["✅ Clean Data", "⚠️ Flagged Data"])
-    with tab1:
-        st.dataframe(clean_df)
-    with tab2:
-        st.dataframe(flag_df)
+elif page=="Explorer":
+    st.title("Explorer")
+    tab1,tab2=st.tabs(["Clean","Flagged"])
+    tab1.dataframe(clean_df)
+    tab2.dataframe(flag_df)
 
 # ==============================
 # DOWNLOADS
 # ==============================
-elif page == "Downloads":
-
-    st.subheader("📥 Download Center")
+elif page=="Downloads":
 
     def to_excel():
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            clean_df.to_excel(writer, index=False, sheet_name="Clean")
-            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
-        return output.getvalue()
+        o=io.BytesIO()
+        with pd.ExcelWriter(o,engine="openpyxl") as w:
+            clean_df.to_excel(w,index=False)
+            flag_df.to_excel(w,index=False)
+        return o.getvalue()
 
-    def to_pdf():
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer)
-        styles = getSampleStyleSheet()
-        content = []
-        content.append(Paragraph("REDI DATA QUALITY REPORT", styles["Title"]))
-        content.append(Spacer(1, 10))
-        content.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
-        content.append(Paragraph(f"Total: {total}", styles["Normal"]))
-        content.append(Paragraph(f"Valid: {valid}", styles["Normal"]))
-        content.append(Paragraph(f"Flagged: {bad}", styles["Normal"]))
-        content.append(Paragraph(f"Score: {score:.2f}%", styles["Normal"]))
+    st.download_button("📊 Full Excel", to_excel(), "redi.xlsx")
+    st.download_button("✅ Clean CSV", clean_df.to_csv(index=False), "clean.csv")
+    st.download_button("⚠️ Flagged CSV", flag_df.to_csv(index=False), "flagged.csv")
 
-        fig = plt.figure()
-        plt.bar(["Valid","Flagged"], [valid,bad])
-        img = io.BytesIO()
-        plt.savefig(img, format="png")
-        plt.close(fig)
-        img.seek(0)
-
-        content.append(Image(img, width=400, height=250))
-        doc.build(content)
-        buffer.seek(0)
-        return buffer.getvalue()
-
-    excel_b64 = base64.b64encode(to_excel()).decode()
-    pdf_b64 = base64.b64encode(to_pdf()).decode()
-    clean_b64 = base64.b64encode(clean_df.to_csv(index=False).encode()).decode()
-    flagged_b64 = base64.b64encode(flag_df.to_csv(index=False).encode()).decode()
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.markdown(f'<a href="data:application/octet-stream;base64,{excel_b64}" download="redi_full.xlsx"><button style="width:100%;background:#16a34a;color:white;padding:12px;border-radius:10px;">📊 Full Excel</button></a>', unsafe_allow_html=True)
-    c2.markdown(f'<a href="data:text/csv;base64,{clean_b64}" download="clean.csv"><button style="width:100%;background:#22c55e;color:white;padding:12px;border-radius:10px;">✅ Clean</button></a>', unsafe_allow_html=True)
-    c3.markdown(f'<a href="data:text/csv;base64,{flagged_b64}" download="flagged.csv"><button style="width:100%;background:#dc2626;color:white;padding:12px;border-radius:10px;">⚠️ Flagged</button></a>', unsafe_allow_html=True)
-    c4.markdown(f'<a href="data:application/pdf;base64,{pdf_b64}" download="report.pdf"><button style="width:100%;background:#1d4ed8;color:white;padding:12px;border-radius:10px;">📄 PDF</button></a>', unsafe_allow_html=True)
-
-st.caption(f"Updated: {datetime.now()}")
+st.caption(f"Updated {datetime.now()}")
