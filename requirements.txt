@@ -1,6 +1,8 @@
 streamlit
 pandas
+numpy
 requests
-openpyxl
 matplotlib
 reportlab
+sqlalchemy
+openpyxl
