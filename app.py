@@ -12,7 +12,7 @@ import numpy as np
 st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
-# 🎨 UI (FIXED + CLEAN)
+# UI
 # ==============================
 st.markdown("""
 <style>
@@ -48,7 +48,7 @@ section[data-testid="stSidebar"] div[data-baseweb="input"] input {
 """, unsafe_allow_html=True)
 
 # ==============================
-# 🧭 SIDEBAR (UPDATED BRANDING ONLY)
+# SIDEBAR
 # ==============================
 st.sidebar.markdown("## 📊 REDI Data Quality System")
 st.sidebar.caption("Field Data Quality & Monitoring Tool")
@@ -59,7 +59,7 @@ page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 # ==============================
-# 📥 FETCH DATA
+# FETCH DATA
 # ==============================
 @st.cache_data(ttl=60)
 def fetch_data(uid, token):
@@ -93,20 +93,22 @@ if "_submission_time" in df.columns:
         (df["_submission_time"] <= pd.to_datetime(end))
     ]
 
+# Month feature
+if "_submission_time" in df.columns:
+    df["Month"] = df["_submission_time"].dt.to_period("M").astype(str)
+
 search = st.sidebar.text_input("Search")
 if search:
     df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 enum_col = next((c for c in df.columns if "enumerator" in c.lower() or "name" in c.lower()), None)
 
-# ==============================
-# GPS DETECTION
-# ==============================
+# GPS
 lat_col = next((c for c in df.columns if "lat" in c.lower()), None)
 lon_col = next((c for c in df.columns if "lon" in c.lower() or "long" in c.lower()), None)
 
 # ==============================
-# ANOMALY DETECTION (UNCHANGED)
+# ANOMALY DETECTION
 # ==============================
 numeric_cols = df.select_dtypes(include=["number"]).columns
 
@@ -118,7 +120,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# VALIDATION (UNCHANGED)
+# VALIDATION
 # ==============================
 clean, flagged = [], []
 
@@ -162,7 +164,7 @@ bad = len(flag_df)
 score = (valid / total * 100) if total else 0
 
 # ==============================
-# 📊 DASHBOARD (UNCHANGED)
+# DASHBOARD
 # ==============================
 if page == "Dashboard":
 
@@ -176,6 +178,14 @@ if page == "Dashboard":
 
     st.bar_chart(pd.DataFrame({"Valid":[valid], "Flagged":[bad]}))
 
+    # Monthly trends
+    if "Month" in df.columns:
+        st.subheader("📅 Monthly Submissions Trend")
+        st.line_chart(df.groupby("Month").size())
+
+        st.subheader("⚠️ Monthly Anomalies")
+        st.bar_chart(df.groupby("Month")["anomaly_flag"].sum())
+
     if lat_col and lon_col:
         st.subheader("🗺️ GPS Map")
         st.map(df[[lat_col, lon_col]].dropna())
@@ -184,9 +194,23 @@ if page == "Dashboard":
             st.subheader("⚠️ Flagged Locations")
             st.map(flag_df[[lat_col, lon_col]].dropna())
 
-    if enum_col and lat_col and lon_col:
+    if enum_col:
         st.subheader("🚶 Enumerator Tracking")
         st.dataframe(df.groupby(enum_col).size().reset_index(name="points"))
+
+        # Enumerator performance
+        st.subheader("🚶 Enumerator Performance Scoring")
+
+        enum_group = df.groupby(enum_col).agg(
+            total_submissions=("anomaly_flag", "count"),
+            flagged=("anomaly_flag", "sum")
+        ).reset_index()
+
+        enum_group["flag_rate"] = enum_group["flagged"] / enum_group["total_submissions"]
+        enum_group["score"] = (1 - enum_group["flag_rate"]) * 100
+
+        st.dataframe(enum_group.sort_values("score", ascending=False))
+        st.bar_chart(enum_group.set_index(enum_col)["score"])
 
     st.subheader("🧠 Insights")
     if df["anomaly_flag"].sum() > 0:
@@ -194,11 +218,53 @@ if page == "Dashboard":
     else:
         st.success("No anomalies detected")
 
+    # Variable analysis
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    if len(numeric_cols) > 0:
+        st.subheader("📊 Variable Analysis")
+        selected_var = st.selectbox("Select variable", numeric_cols)
+
+        if "Month" in df.columns:
+            st.line_chart(df.groupby("Month")[selected_var].mean())
+
+        st.bar_chart(df[selected_var].value_counts().head(20))
+
+    # Qualitative analysis
+    st.subheader("📝 Qualitative & Categorical Insights")
+    cat_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    exclude_cols = ["_id", "_uuid", "_submission_time"]
+    cat_cols = [c for c in cat_cols if c not in exclude_cols]
+
+    if len(cat_cols) > 0:
+        selected_cat = st.selectbox("Select categorical variable", cat_cols)
+        freq = df[selected_cat].value_counts().head(20)
+
+        st.write("Top responses:")
+        st.dataframe(freq)
+        st.bar_chart(freq)
+
+        avg_len = df[selected_cat].dropna().astype(str).str.len().mean()
+        if avg_len > 40:
+            st.subheader("🧠 Open-ended Response Preview")
+            st.write(df[selected_cat].dropna().sample(min(5, len(df))))
+    else:
+        st.info("No categorical/text variables detected.")
+
+    # Household tracking
+    if "HH_ID" in df.columns and "Month" in df.columns:
+        st.subheader("🏠 Household Panel Coverage")
+        hh_months = df.groupby("HH_ID")["Month"].nunique()
+        st.write("Average months per household:", round(hh_months.mean(), 2))
+
+        incomplete = hh_months[hh_months < 12]
+        if len(incomplete) > 0:
+            st.warning(f"{len(incomplete)} households have incomplete monthly data")
+
     st.subheader("⚠️ Flagged Data")
     st.dataframe(flag_df.head(50))
 
 # ==============================
-# 🔍 EXPLORER
+# EXPLORER
 # ==============================
 elif page == "Explorer":
     t1, t2 = st.tabs(["Clean", "Flagged"])
@@ -206,7 +272,7 @@ elif page == "Explorer":
     t2.dataframe(flag_df)
 
 # ==============================
-# 📥 DOWNLOADS (UNCHANGED)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
