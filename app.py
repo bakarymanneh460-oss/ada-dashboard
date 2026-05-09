@@ -544,6 +544,256 @@ else:
     df["ai_flag"] = False
 
 # =========================================
+# ADVANCED QUALITATIVE VALIDATION ENGINE
+# =========================================
+
+df["qualitative_flag"] = False
+df["qualitative_issue"] = ""
+
+# =========================================
+# REQUIRED FIELD CHECKS
+# =========================================
+required_keywords = [
+    "name",
+    "gender",
+    "age",
+    "region",
+    "district"
+]
+
+required_cols = []
+
+for col in df.columns:
+
+    for key in required_keywords:
+
+        if key in col.lower():
+
+            required_cols.append(col)
+
+for col in required_cols:
+
+    missing_mask = (
+        df[col].isna() |
+        (df[col].astype(str).str.strip() == "")
+    )
+
+    df.loc[
+        missing_mask,
+        "qualitative_flag"
+    ] = True
+
+    df.loc[
+        missing_mask,
+        "qualitative_issue"
+    ] += f"Missing {col}; "
+
+# =========================================
+# BASIC SURVEY LOGIC RULES
+# =========================================
+age_col = None
+
+for col in df.columns:
+
+    if "age" in col.lower():
+        age_col = col
+        break
+
+gender_col = None
+
+for col in df.columns:
+
+    if "gender" in col.lower() or "sex" in col.lower():
+        gender_col = col
+        break
+
+preg_col = None
+
+for col in df.columns:
+
+    if "preg" in col.lower():
+        preg_col = col
+        break
+
+if gender_col and preg_col:
+
+    mask = (
+        df[gender_col]
+        .astype(str)
+        .str.lower()
+        .str.contains("male", na=False)
+    ) & (
+        df[preg_col]
+        .astype(str)
+        .str.lower()
+        .str.contains("yes", na=False)
+    )
+
+    df.loc[mask, "qualitative_flag"] = True
+
+    df.loc[
+        mask,
+        "qualitative_issue"
+    ] += "Male marked pregnant; "
+
+if age_col:
+
+    mask = (
+        (pd.to_numeric(df[age_col], errors="coerce") < 0) |
+        (pd.to_numeric(df[age_col], errors="coerce") > 120)
+    )
+
+    df.loc[mask, "qualitative_flag"] = True
+
+    df.loc[
+        mask,
+        "qualitative_issue"
+    ] += "Impossible age value; "
+
+# =========================================
+# SKIP LOGIC VALIDATION
+# =========================================
+marital_col = None
+
+for col in df.columns:
+
+    if "marital" in col.lower():
+        marital_col = col
+        break
+
+children_col = None
+
+for col in df.columns:
+
+    if "children" in col.lower() or "child" in col.lower():
+        children_col = col
+        break
+
+if marital_col and children_col:
+
+    mask = (
+        df[marital_col]
+        .astype(str)
+        .str.lower()
+        .str.contains("single", na=False)
+    ) & (
+        pd.to_numeric(
+            df[children_col],
+            errors="coerce"
+        ) > 5
+    )
+
+    df.loc[mask, "qualitative_flag"] = True
+
+    df.loc[
+        mask,
+        "qualitative_issue"
+    ] += "Skip logic inconsistency; "
+
+# =========================================
+# TEXT INCONSISTENCY CHECKS
+# =========================================
+text_cols = df.select_dtypes(
+    include=["object"]
+).columns
+
+invalid_patterns = [
+    "asdf",
+    "test",
+    "xxx",
+    "na",
+    "n/a",
+    "unknown"
+]
+
+for col in text_cols:
+
+    mask = df[col].astype(str).str.lower().isin(
+        invalid_patterns
+    )
+
+    df.loc[mask, "qualitative_flag"] = True
+
+    df.loc[
+        mask,
+        "qualitative_issue"
+    ] += f"Suspicious text in {col}; "
+
+# =========================================
+# SPELLING ERROR DETECTION
+# ENGLISH + INDONESIAN
+# =========================================
+common_errors = {
+
+    "teh": "the",
+    "recieve": "receive",
+    "adress": "address",
+
+    "tdak": "tidak",
+    "sya": "saya",
+    "rumh": "rumah",
+    "anak2": "anak-anak"
+}
+
+for col in text_cols:
+
+    lower_text = df[col].astype(str).str.lower()
+
+    for wrong, correct in common_errors.items():
+
+        mask = lower_text.str.contains(
+            wrong,
+            na=False
+        )
+
+        df.loc[mask, "qualitative_flag"] = True
+
+        df.loc[
+            mask,
+            "qualitative_issue"
+        ] += (
+            f"Possible spelling error "
+            f"({wrong}->{correct}) in {col}; "
+        )
+
+# =========================================
+# ADVANCED SURVEY LOGIC ENGINE
+# =========================================
+education_col = None
+
+for col in df.columns:
+
+    if "education" in col.lower():
+        education_col = col
+        break
+
+if education_col and age_col:
+
+    mask = (
+        df[education_col]
+        .astype(str)
+        .str.lower()
+        .str.contains(
+            "phd|doctorate|master",
+            na=False
+        )
+    ) & (
+        pd.to_numeric(
+            df[age_col],
+            errors="coerce"
+        ) < 15
+    )
+
+    df.loc[mask, "qualitative_flag"] = True
+
+    df.loc[
+        mask,
+        "qualitative_issue"
+    ] += (
+        "Education-age inconsistency; "
+    )
+
+# =========================================
 # ENUMERATOR PERFORMANCE
 # QUALITY MONITORING ONLY
 # =========================================
@@ -565,11 +815,11 @@ else:
 
 # =========================================
 # FINAL FLAGS
-# ONLY DATA QUALITY ISSUES
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
-    df["ai_flag"].astype(int)
+    df["ai_flag"].astype(int) +
+    df["qualitative_flag"].astype(int)
 )
 
 df["final_flag"] = (
@@ -667,9 +917,6 @@ if page == "Dashboard":
         use_container_width=True
     )
 
-    # =====================================
-    # ENUMERATOR PERFORMANCE
-    # =====================================
     if ENUM_COL:
 
         st.subheader(
@@ -719,11 +966,13 @@ elif page == "Quality Analytics":
     summary = pd.DataFrame({
         "Issue": [
             "Basic Anomalies",
-            "AI Flags"
+            "AI Flags",
+            "Qualitative Issues"
         ],
         "Count": [
             df["anomaly_flag"].sum(),
-            df["ai_flag"].sum()
+            df["ai_flag"].sum(),
+            df["qualitative_flag"].sum()
         ]
     })
 
