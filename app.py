@@ -47,7 +47,7 @@ if st.sidebar.button("🔄 Refresh"):
     st.rerun()
 
 # ==============================
-# FETCH
+# FETCH DATA
 # ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -80,7 +80,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# COLUMN DETECTION
+# DETECT COLUMNS
 # ==============================
 def detect(names):
     for col in df.columns:
@@ -96,8 +96,28 @@ HH_COL = detect(["hh", "household", "id"])
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
+# ==============================
+# DATE FILTER (RESTORED)
+# ==============================
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
+
+    c1, c2 = st.sidebar.columns(2)
+
+    start_date = c1.date_input(
+        "Start Date",
+        value=df[DATE_COL].min().date() if not df[DATE_COL].isna().all() else datetime.today()
+    )
+
+    end_date = c2.date_input(
+        "End Date",
+        value=df[DATE_COL].max().date() if not df[DATE_COL].isna().all() else datetime.today()
+    )
+
+    df = df[
+        (df[DATE_COL] >= pd.to_datetime(start_date)) &
+        (df[DATE_COL] <= pd.to_datetime(end_date))
+    ]
 
 # ==============================
 # FRAUD DETECTION
@@ -110,7 +130,7 @@ else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY
+# NUMERIC ANOMALY DETECTION
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
@@ -123,8 +143,13 @@ if len(num_cols) > 0:
     IQR = Q3 - Q1
     iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) | (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
 
-    iso_flag = IsolationForest(contamination=ANOMALY_CONTAMINATION, random_state=42)\
-        .fit_predict(df[num_cols].fillna(0)) == -1
+    try:
+        iso_flag = IsolationForest(
+            contamination=ANOMALY_CONTAMINATION,
+            random_state=42
+        ).fit_predict(df[num_cols].fillna(0)) == -1
+    except:
+        iso_flag = pd.Series([False]*len(df))
 
     missing_flag = df[num_cols].isna().sum(axis=1) > 0
 
@@ -133,12 +158,15 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# TEXT CHECK
+# QUALITATIVE CHECKS
 # ==============================
 df["text_flag"] = False
 for col in df.select_dtypes(include=["object"]).columns:
     s = df[col].astype(str).str.lower()
-    df["text_flag"] |= s.isin(["", "na", "n/a", "none", "ok", "test"]) | (s.str.len() < 3)
+    df["text_flag"] |= (
+        s.isin(["", "na", "n/a", "none", "ok", "test"]) |
+        (s.str.len() < 3)
+    )
 
 # ==============================
 # HOUSEHOLD TREND
@@ -154,7 +182,7 @@ if HH_COL and len(num_cols) > 0:
 # FLAG REASONS
 # ==============================
 df["flag_reason"] = (
-    df["anomaly_flag"].map({True:"Numeric anomaly",False:""}) + 
+    df["anomaly_flag"].map({True:"Numeric anomaly",False:""}) +
     df["text_flag"].map({True:", Text issue",False:""}) +
     df["fraud_flag"].map({True:", Fast submission",False:""}) +
     df["household_trend_flag"].map({True:", Household inconsistency",False:""})
@@ -170,12 +198,12 @@ df.loc[df["anomaly_flag"], "quality_score"] -= 40
 df.loc[df["text_flag"], "quality_score"] -= 20
 df.loc[df["fraud_flag"], "quality_score"] -= 20
 df.loc[df["household_trend_flag"], "quality_score"] -= 20
-df["quality_score"] = df["quality_score"].clip(0,100)
+df["quality_score"] = df["quality_score"].clip(0, 100)
 
 df["quality_category"] = pd.cut(
     df["quality_score"],
-    bins=[0,50,75,90,100],
-    labels=["Poor","Fair","Good","Excellent"]
+    bins=[0, 50, 75, 90, 100],
+    labels=["Poor", "Fair", "Good", "Excellent"]
 )
 
 clean_df = df[df["quality_score"] >= 75]
@@ -184,7 +212,7 @@ flag_df = df[df["quality_score"] < 75]
 # ==============================
 # DASHBOARD
 # ==============================
-if page=="Dashboard":
+if page == "Dashboard":
     st.title("📊 REDI Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
@@ -196,20 +224,19 @@ if page=="Dashboard":
     st.bar_chart(df["quality_category"].value_counts())
 
 # ==============================
-# EXPLORER (WITH INVESTIGATION PANEL)
+# EXPLORER
 # ==============================
-elif page=="Explorer":
+elif page == "Explorer":
 
     st.title("🔍 Data Explorer & Investigation")
 
-    tab1, tab2 = st.tabs(["Clean Data","Flagged Data"])
+    tab1, tab2 = st.tabs(["Clean Data", "Flagged Data"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
 
     st.subheader("📊 Flag Summary")
     st.dataframe(flag_df["flag_reason"].value_counts())
 
-    # 🔍 SEARCH TOOL
     st.subheader("🔎 Investigation Tool")
     search = st.text_input("Search any value")
 
@@ -218,12 +245,11 @@ elif page=="Explorer":
         st.success(f"{len(results)} results found")
         st.dataframe(results)
 
-        # ROW INSPECTION
-        st.subheader("🧠 Row Inspection")
         if not results.empty:
             idx = st.selectbox("Select row index", results.index)
             row = df.loc[idx]
 
+            st.subheader("🧠 Row Inspection")
             st.write(row)
 
             st.info(f"""
@@ -235,55 +261,58 @@ elif page=="Explorer":
 # ==============================
 # DOWNLOADS
 # ==============================
-elif page=="Downloads":
+elif page == "Downloads":
 
     def to_excel(data):
-        output=io.BytesIO()
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            data.to_excel(writer,index=False)
+            data.to_excel(writer, index=False)
         output.seek(0)
         return output
 
     def full_excel():
-        output=io.BytesIO()
+        output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            clean_df.to_excel(writer,"Clean",index=False)
-            flag_df.to_excel(writer,"Flagged",index=False)
+            clean_df.to_excel(writer, sheet_name="Clean", index=False)
+            flag_df.to_excel(writer, sheet_name="Flagged", index=False)
         output.seek(0)
         return output
 
     def pdf():
-        buffer=io.BytesIO()
-        doc=SimpleDocTemplate(buffer)
-        styles=getSampleStyleSheet()
-        content=[
-            Paragraph("REDI Report",styles['Title']),
-            Spacer(1,12),
-            Paragraph(f"Total: {len(df)}",styles['Normal']),
-            Paragraph(f"Valid: {len(clean_df)}",styles['Normal']),
-            Paragraph(f"Flagged: {len(flag_df)}",styles['Normal']),
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+
+        content = [
+            Paragraph("REDI Data Quality Report", styles['Title']),
+            Spacer(1, 12),
+            Paragraph(f"Total: {len(df)}", styles['Normal']),
+            Paragraph(f"Valid: {len(clean_df)}", styles['Normal']),
+            Paragraph(f"Flagged: {len(flag_df)}", styles['Normal']),
+            Paragraph(f"Average Score: {df['quality_score'].mean():.2f}", styles['Normal']),
         ]
+
         doc.build(content)
         buffer.seek(0)
         return buffer
 
-    c1,c2,c3,c4=st.columns(4)
+    col1,col2,col3,col4 = st.columns(4)
 
-    with c1:
-        st.markdown('<div class="btn-green">📊 Full Excel</div>',unsafe_allow_html=True)
-        st.download_button("",full_excel(),"full.xlsx")
+    with col1:
+        st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
+        st.download_button("", full_excel(), "full.xlsx")
 
-    with c2:
-        st.markdown('<div class="btn-green">✅ Clean</div>',unsafe_allow_html=True)
-        st.download_button("",to_excel(clean_df),"clean.xlsx")
+    with col2:
+        st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
+        st.download_button("", to_excel(clean_df), "clean.xlsx")
 
-    with c3:
-        st.markdown('<div class="btn-red">⚠️ Flagged</div>',unsafe_allow_html=True)
-        st.download_button("",to_excel(flag_df),"flagged.xlsx")
+    with col3:
+        st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>', unsafe_allow_html=True)
+        st.download_button("", to_excel(flag_df), "flagged.xlsx")
 
-    with c4:
-        st.markdown('<div class="btn-green">📄 PDF</div>',unsafe_allow_html=True)
-        st.download_button("",pdf(),"report.pdf")
+    with col4:
+        st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
+        st.download_button("", pdf(), "report.pdf")
 
 # ==============================
 # FOOTER
