@@ -1,3 +1,8 @@
+# =========================================
+# REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
+# FINAL PRODUCTION VERSION
+# =========================================
+
 import streamlit as st
 import pandas as pd
 import io
@@ -5,8 +10,13 @@ import requests
 import numpy as np
 import os
 import logging
+import yaml
+import streamlit_authenticator as stauth
+
+from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
+
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -14,8 +24,10 @@ from reportlab.platypus import (
     Table,
     TableStyle
 )
+
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+
 import plotly.express as px
 
 # =========================================
@@ -37,8 +49,8 @@ APP_NAME = os.getenv(
 
 ENABLE_AI = True
 
-# safer production values
 AI_CONTAMINATION = 0.005
+
 FRAUD_THRESHOLD = 70
 
 # =========================================
@@ -51,6 +63,80 @@ logging.basicConfig(
     level=logging.ERROR,
     format="%(asctime)s %(levelname)s %(message)s"
 )
+
+# =========================================
+# AUTHENTICATION
+# =========================================
+with open("config.yaml") as file:
+
+    config = yaml.load(
+        file,
+        Loader=SafeLoader
+    )
+
+authenticator = stauth.Authenticate(
+    config["credentials"],
+    config["cookie"]["name"],
+    config["cookie"]["key"],
+    config["cookie"]["expiry_days"]
+)
+
+name, authentication_status, username = authenticator.login()
+
+if authentication_status is False:
+
+    st.error("Incorrect username or password")
+
+    st.stop()
+
+if authentication_status is None:
+
+    st.warning("Please login")
+
+    st.stop()
+
+authenticator.logout(
+    "Logout",
+    "sidebar"
+)
+
+st.sidebar.success(
+    f"Welcome {name}"
+)
+
+# =========================================
+# USER ROLE
+# =========================================
+role = config["credentials"]["usernames"][username]["role"]
+
+st.sidebar.info(
+    f"Role: {role}"
+)
+
+# =========================================
+# AUDIT TRAILS
+# =========================================
+os.makedirs("audit", exist_ok=True)
+
+def log_action(user, action):
+
+    log = pd.DataFrame([{
+        "user": user,
+        "action": action,
+        "time": datetime.now()
+    }])
+
+    file = "audit/audit_log.csv"
+
+    if os.path.exists(file):
+
+        old = pd.read_csv(file)
+
+        log = pd.concat([old, log])
+
+    log.to_csv(file, index=False)
+
+log_action(username, "logged_in")
 
 # =========================================
 # SESSION
@@ -92,24 +178,62 @@ section[data-testid="stSidebar"] input {
 # SIDEBAR
 # =========================================
 st.sidebar.title("📊 REDI Universal Data System")
-st.sidebar.caption("Field Data Quality Monitoring System")
 
-FORM_UID = st.sidebar.text_input("Kobo Form UID")
+st.sidebar.caption(
+    "Field Data Quality Monitoring System"
+)
+
+FORM_UID = st.sidebar.text_input(
+    "Kobo Form UID"
+)
+
+# =========================================
+# ROLE-BASED NAVIGATION
+# =========================================
+page_options = [
+    "Dashboard",
+    "Explorer",
+    "Quality Analytics",
+    "Downloads"
+]
+
+if role == "enumerator":
+
+    page_options = [
+        "Dashboard",
+        "Explorer"
+    ]
+
+elif role == "supervisor":
+
+    page_options = [
+        "Dashboard",
+        "Explorer",
+        "Quality Analytics"
+    ]
 
 page = st.sidebar.radio(
     "Navigation",
-    [
-        "Dashboard",
-        "Explorer",
-        "Quality Analytics",
-        "Downloads"
-    ]
+    page_options
 )
 
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
+# =========================================
+# KOBO TOKEN
+# =========================================
+KOBO_TOKEN = st.secrets.get(
+    "KOBO_TOKEN",
+    None
+)
 
+# =========================================
+# REFRESH
+# =========================================
 if st.sidebar.button("🔄 Refresh System"):
+
+    log_action(username, "refreshed_system")
+
     st.cache_data.clear()
+
     st.rerun()
 
 st.sidebar.success("System Online")
@@ -172,7 +296,10 @@ def fetch_data(uid, token):
 # =========================================
 # LOAD DATA
 # =========================================
-df = fetch_data(FORM_UID, KOBO_TOKEN)
+df = fetch_data(
+    FORM_UID,
+    KOBO_TOKEN
+)
 
 if df.empty:
 
@@ -229,6 +356,7 @@ if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 if DATE_COL:
+
     df[DATE_COL] = pd.to_datetime(
         df[DATE_COL],
         errors="coerce"
@@ -266,7 +394,10 @@ if REGION_COL:
     )
 
     if regions:
-        df = df[df[REGION_COL].isin(regions)]
+
+        df = df[
+            df[REGION_COL].isin(regions)
+        ]
 
 if ENUM_COL:
 
@@ -276,7 +407,10 @@ if ENUM_COL:
     )
 
     if enums:
-        df = df[df[ENUM_COL].isin(enums)]
+
+        df = df[
+            df[ENUM_COL].isin(enums)
+        ]
 
 search = st.sidebar.text_input("Search")
 
@@ -297,6 +431,7 @@ if search:
 # MONTH
 # =========================================
 if DATE_COL:
+
     df["Month"] = (
         df[DATE_COL]
         .dt.to_period("M")
@@ -304,12 +439,15 @@ if DATE_COL:
     )
 
 # =========================================
-# BASIC ANOMALY DETECTION
+# NUMERIC COLUMNS
 # =========================================
 num_cols = df.select_dtypes(
     include=["number"]
 ).columns
 
+# =========================================
+# BASIC ANOMALY DETECTION
+# =========================================
 if len(num_cols) > 0:
 
     std = df[num_cols].std().replace(0, 1)
@@ -318,8 +456,9 @@ if len(num_cols) > 0:
         (df[num_cols] - df[num_cols].mean()) / std
     )
 
-    # safer threshold
-    df["anomaly_flag"] = z.max(axis=1) > 4.5
+    df["anomaly_flag"] = (
+        z.max(axis=1) > 4.5
+    )
 
 else:
 
@@ -369,8 +508,10 @@ if ENUM_COL and DATE_COL:
     perf = df.groupby(ENUM_COL).agg(
         total=("time_diff", "count"),
 
-        # safer speed threshold
-        fast=("time_diff", lambda x: (x < 20).sum())
+        fast=(
+            "time_diff",
+            lambda x: (x < 20).sum()
+        )
     ).reset_index()
 
     perf["fraud_score"] = (
@@ -384,7 +525,6 @@ if ENUM_COL and DATE_COL:
         how="left"
     )
 
-    # safer threshold
     df["fraud_flag"] = (
         df["fraud_score"] > FRAUD_THRESHOLD
     )
@@ -402,8 +542,9 @@ df["flag_score"] = (
     df["ai_flag"].astype(int)
 )
 
-# require at least TWO systems
-df["final_flag"] = df["flag_score"] >= 2
+df["final_flag"] = (
+    df["flag_score"] >= 2
+)
 
 # =========================================
 # SEVERITY LEVELS
@@ -424,6 +565,13 @@ df.loc[
     df["flag_score"] >= 3,
     "severity"
 ] = "Critical"
+
+# =========================================
+# REVIEW COLUMNS
+# =========================================
+df["review_status"] = "Pending"
+
+df["review_comment"] = ""
 
 # =========================================
 # CLEAN & FLAGGED
@@ -499,9 +647,6 @@ if page == "Dashboard":
         unsafe_allow_html=True
     )
 
-    # =====================================
-    # QUALITY OVERVIEW
-    # =====================================
     st.subheader("Data Quality Overview")
 
     quality_df = pd.DataFrame({
@@ -603,6 +748,58 @@ if page == "Dashboard":
             use_container_width=True
         )
 
+    # =====================================
+    # SUPERVISOR REVIEW WORKFLOW
+    # =====================================
+    if role in ["admin", "supervisor"]:
+
+        st.subheader(
+            "Supervisor Review Workflow"
+        )
+
+        flagged_cases = df[df["final_flag"]]
+
+        if not flagged_cases.empty:
+
+            selected_case = st.selectbox(
+                "Select Flagged Record",
+                flagged_cases.index
+            )
+
+            decision = st.selectbox(
+                "Decision",
+                [
+                    "Approve",
+                    "Reject",
+                    "Needs Review"
+                ]
+            )
+
+            comment = st.text_area(
+                "Supervisor Comment"
+            )
+
+            if st.button("Save Review"):
+
+                df.loc[
+                    selected_case,
+                    "review_status"
+                ] = decision
+
+                df.loc[
+                    selected_case,
+                    "review_comment"
+                ] = comment
+
+                log_action(
+                    username,
+                    f"reviewed_case_{selected_case}"
+                )
+
+                st.success(
+                    "Review saved successfully"
+                )
+
 # =========================================
 # EXPLORER
 # =========================================
@@ -616,12 +813,14 @@ elif page == "Explorer":
     ])
 
     with tab1:
+
         st.dataframe(
             clean_df,
             use_container_width=True
         )
 
     with tab2:
+
         st.dataframe(
             flag_df,
             use_container_width=True
@@ -797,35 +996,55 @@ elif page == "Downloads":
 
     with c1:
 
-        st.download_button(
+        if st.download_button(
             "📊 Download Full Excel",
             full_excel(),
             file_name="redi_full.xlsx"
-        )
+        ):
+
+            log_action(
+                username,
+                "downloaded_full_excel"
+            )
 
     with c2:
 
-        st.download_button(
+        if st.download_button(
             "✅ Download Clean",
             to_excel(clean_df),
             file_name="clean.xlsx"
-        )
+        ):
+
+            log_action(
+                username,
+                "downloaded_clean_excel"
+            )
 
     with c3:
 
-        st.download_button(
+        if st.download_button(
             "⚠️ Download Flagged",
             to_excel(flag_df),
             file_name="flagged.xlsx"
-        )
+        ):
+
+            log_action(
+                username,
+                "downloaded_flagged_excel"
+            )
 
     with c4:
 
-        st.download_button(
+        if st.download_button(
             "📄 Download PDF",
             generate_pdf(),
             file_name="redi_report.pdf"
-        )
+        ):
+
+            log_action(
+                username,
+                "downloaded_pdf_report"
+            )
 
 # =========================================
 # FOOTER
