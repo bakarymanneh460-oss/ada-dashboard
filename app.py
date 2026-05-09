@@ -138,7 +138,7 @@ if DATE_COL:
     df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
 # ==============================
-# ANOMALY DETECTION (IMPROVED)
+# ANOMALY DETECTION
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
@@ -154,7 +154,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# ENUMERATOR PERFORMANCE (IMPROVED)
+# ENUMERATOR PERFORMANCE
 # ==============================
 if ENUM_COL and DATE_COL:
     df = df.sort_values(DATE_COL)
@@ -228,7 +228,6 @@ if page == "Dashboard":
         "Count": [valid, bad]
     }).set_index("Status"))
 
-    # Insights
     st.subheader("🔍 Key Insights")
     if bad > 0:
         st.warning(f"{bad} records flagged ({(bad/total*100):.1f}%)")
@@ -273,7 +272,7 @@ elif page=="Explorer":
     tab2.dataframe(flag_df)
 
 # ==============================
-# DOWNLOADS (UPGRADED)
+# DOWNLOADS
 # ==============================
 elif page=="Downloads":
 
