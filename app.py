@@ -39,7 +39,7 @@ page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-FAST_THRESHOLD = st.sidebar.slider("Fast Submission Threshold (sec)", 10, 300, 60)
+FAST_THRESHOLD = st.sidebar.slider("Base Fast Threshold (sec)", 10, 300, 60)
 ANOMALY_CONTAMINATION = st.sidebar.slider("Anomaly Sensitivity", 0.01, 0.20, 0.05)
 
 if st.sidebar.button("🔄 Refresh"):
@@ -112,36 +112,81 @@ if DATE_COL:
     ]
 
 # ==============================
-# FRAUD DETECTION (IMPROVED)
+# NUMERIC COLUMNS
+# ==============================
+num_cols = df.select_dtypes(include=["number"]).columns
+
+# ==============================
+# ADAPTIVE THRESHOLDS (FIXED)
+# ==============================
+def compute_adaptive(df):
+    thresholds = {}
+
+    if len(num_cols) > 0:
+        std = df[num_cols].std().replace(0, 1)
+        z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+
+        z_thresh = z.stack().quantile(0.95)
+        thresholds["z"] = max(2.5, min(z_thresh, 4))
+
+        Q1 = df[num_cols].quantile(0.25)
+        Q3 = df[num_cols].quantile(0.75)
+        IQR = Q3 - Q1
+
+        iqr_mult = 1.5 + (IQR.mean() / (df[num_cols].mean().abs().mean() + 1e-5))
+        thresholds["iqr"] = max(1.5, min(iqr_mult, 3))
+    else:
+        thresholds["z"] = 3
+        thresholds["iqr"] = 1.5
+
+    if DATE_COL and ENUM_COL:
+        df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
+        time_vals = df["time_diff"].dropna()
+
+        if len(time_vals) > 0:
+            fast = time_vals.quantile(0.10)
+            thresholds["fast"] = max(20, min(fast, 120))
+        else:
+            thresholds["fast"] = 60
+    else:
+        thresholds["fast"] = 60
+
+    return thresholds
+
+adaptive = compute_adaptive(df)
+
+# ==============================
+# FRAUD DETECTION
 # ==============================
 if ENUM_COL and DATE_COL:
-    df = df.sort_values(DATE_COL)
-    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
-
-    fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < FAST_THRESHOLD).mean())
-    suspicious_enum = fraud_ratio[fraud_ratio > 0.5].index
-
+    fast_cutoff = adaptive["fast"]
+    fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < fast_cutoff).mean())
+    suspicious_enum = fraud_ratio[fraud_ratio > 0.7].index
     df["fraud_flag"] = df[ENUM_COL].isin(suspicious_enum)
 else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY (BALANCED)
+# NUMERIC ANOMALY
 # ==============================
-num_cols = df.select_dtypes(include=["number"]).columns
-
 if len(num_cols) > 0:
+
     std = df[num_cols].std().replace(0, 1)
-    z_flag = (np.abs((df[num_cols] - df[num_cols].mean()) / std).max(axis=1) > 3)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+    z_flag = z.max(axis=1) > adaptive["z"]
 
     Q1 = df[num_cols].quantile(0.25)
     Q3 = df[num_cols].quantile(0.75)
     IQR = Q3 - Q1
-    iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) | (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
+
+    iqr_flag = ((df[num_cols] < (Q1 - adaptive["iqr"] * IQR)) |
+                (df[num_cols] > (Q3 + adaptive["iqr"] * IQR))).any(axis=1)
 
     try:
-        iso_flag = IsolationForest(contamination=ANOMALY_CONTAMINATION, random_state=42)\
-            .fit_predict(df[num_cols].fillna(0)) == -1
+        iso_flag = IsolationForest(
+            contamination=ANOMALY_CONTAMINATION,
+            random_state=42
+        ).fit_predict(df[num_cols].fillna(0)) == -1
     except:
         iso_flag = pd.Series([False]*len(df))
 
@@ -154,12 +199,12 @@ if len(num_cols) > 0:
         missing_flag.astype(int)
     )
 
-    df["anomaly_flag"] = df["numeric_score"] >= 2  # KEY FIX
+    df["anomaly_flag"] = df["numeric_score"] >= 2
 else:
     df["anomaly_flag"] = False
 
 # ==============================
-# TEXT CHECK (LESS AGGRESSIVE)
+# TEXT CHECK
 # ==============================
 df["text_flag"] = False
 for col in df.select_dtypes(include=["object"]).columns:
@@ -170,7 +215,7 @@ for col in df.select_dtypes(include=["object"]).columns:
     )
 
 # ==============================
-# HOUSEHOLD TREND (TUNED)
+# HOUSEHOLD TREND
 # ==============================
 df["household_trend_flag"] = False
 if HH_COL and len(num_cols) > 0:
@@ -192,7 +237,7 @@ df["flag_reason"] = (
 df["flag_reason"] = df["flag_reason"].replace("", "Clean")
 
 # ==============================
-# QUALITY SCORE (BALANCED)
+# QUALITY SCORE
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 40
@@ -208,7 +253,7 @@ df["quality_category"] = pd.cut(
 )
 
 # ==============================
-# SPLIT (LESS STRICT)
+# SPLIT
 # ==============================
 flag_df = df[df["quality_score"] < 50]
 clean_df = df[df["quality_score"] >= 50]
@@ -216,7 +261,7 @@ clean_df = df[df["quality_score"] >= 50]
 # ==============================
 # DASHBOARD
 # ==============================
-if page=="Dashboard":
+if page == "Dashboard":
     st.title("📊 REDI Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
@@ -227,10 +272,17 @@ if page=="Dashboard":
 
     st.bar_chart(df["quality_category"].value_counts())
 
+    st.subheader("⚙️ Adaptive Thresholds")
+    st.write({
+        "Z-score threshold": round(adaptive["z"],2),
+        "IQR multiplier": round(adaptive["iqr"],2),
+        "Fast submission cutoff": round(adaptive["fast"],2)
+    })
+
 # ==============================
 # EXPLORER
 # ==============================
-elif page=="Explorer":
+elif page == "Explorer":
 
     tab1,tab2 = st.tabs(["Clean","Flagged"])
     tab1.dataframe(clean_df)
@@ -246,7 +298,7 @@ elif page=="Explorer":
 # ==============================
 # DOWNLOADS
 # ==============================
-elif page=="Downloads":
+elif page == "Downloads":
 
     def to_excel(data):
         output = io.BytesIO()
