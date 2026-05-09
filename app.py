@@ -49,8 +49,8 @@ st.markdown("""
 .stApp {
     background: linear-gradient(
         135deg,
-        #1e3a8a,
-        #2563eb
+        #eff6ff,
+        #dbeafe
     );
 }
 
@@ -69,7 +69,7 @@ input {
 
 /* Login Button */
 button[kind="primary"] {
-    background-color: #1e3a8a !important;
+    background-color: #1d4ed8 !important;
     color: white !important;
     border-radius: 10px !important;
     border: none !important;
@@ -78,7 +78,7 @@ button[kind="primary"] {
 
 /* Sidebar */
 section[data-testid="stSidebar"] {
-    background-color:#1e3a8a !important;
+    background-color:#1d4ed8 !important;
 }
 
 /* Sidebar Text */
@@ -685,6 +685,111 @@ if page == "Dashboard":
         fig,
         use_container_width=True
     )
+
+    # =====================================
+    # ENUMERATOR PERFORMANCE
+    # =====================================
+    if ENUM_COL:
+
+        st.subheader(
+            "Enumerator Performance"
+        )
+
+        enum_perf = (
+            df.groupby(ENUM_COL)["final_flag"]
+            .agg(["count", "sum"])
+            .reset_index()
+        )
+
+        enum_perf.columns = [
+            "Enumerator",
+            "Total Records",
+            "Flagged Records"
+        ]
+
+        enum_perf["Quality Score (%)"] = (
+            (
+                1 -
+                (
+                    enum_perf["Flagged Records"] /
+                    enum_perf["Total Records"]
+                )
+            ) * 100
+        ).round(1)
+
+        st.dataframe(
+            enum_perf.sort_values(
+                "Quality Score (%)",
+                ascending=False
+            ),
+            use_container_width=True
+        )
+
+    # =====================================
+    # REGIONAL PERFORMANCE
+    # =====================================
+    if REGION_COL:
+
+        st.subheader(
+            "Regional Performance"
+        )
+
+        regional_perf = (
+            df.groupby(REGION_COL)["final_flag"]
+            .agg(["count", "sum"])
+            .reset_index()
+        )
+
+        regional_perf.columns = [
+            "Region",
+            "Total Records",
+            "Flagged Records"
+        ]
+
+        regional_perf["Quality Score (%)"] = (
+            (
+                1 -
+                (
+                    regional_perf["Flagged Records"] /
+                    regional_perf["Total Records"]
+                )
+            ) * 100
+        ).round(1)
+
+        st.dataframe(
+            regional_perf.sort_values(
+                "Quality Score (%)",
+                ascending=False
+            ),
+            use_container_width=True
+        )
+
+    # =====================================
+    # MONTHLY TREND
+    # =====================================
+    if "Month" in df.columns:
+
+        st.subheader(
+            "Monthly Submission Trend"
+        )
+
+        monthly = (
+            df.groupby("Month")
+            .size()
+            .reset_index(name="records")
+        )
+
+        fig2 = px.line(
+            monthly,
+            x="Month",
+            y="records",
+            markers=True
+        )
+
+        st.plotly_chart(
+            fig2,
+            use_container_width=True
+        )
 
 # =========================================
 # EXPLORER
