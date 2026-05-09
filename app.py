@@ -12,7 +12,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sklearn.ensemble import IsolationForest
 
 # ==============================
-# AUTO REFRESH (60s)
+# REAL-TIME REFRESH (60s)
 # ==============================
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -37,7 +37,7 @@ section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 
 .kpi-card {
-    padding:20px;
+    padding:18px;
     border-radius:14px;
     color:white;
     text-align:center;
@@ -48,17 +48,34 @@ section[data-testid="stSidebar"] * {color:white !important;}
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIDEBAR
+# SIDEBAR - MULTI UID MANAGER
 # ==============================
-st.sidebar.title("📊 REDI System")
+st.sidebar.title("📂 Dataset Manager")
 
-FORM_UID = st.sidebar.text_input("Form UID")
+if "uid_list" not in st.session_state:
+    st.session_state.uid_list = []
+
+new_uid = st.sidebar.text_input("Add KoBo Form UID")
+
+if st.sidebar.button("➕ Add Dataset"):
+    if new_uid and new_uid not in st.session_state.uid_list:
+        st.session_state.uid_list.append(new_uid)
+
+st.sidebar.markdown("### 📌 Saved Datasets")
+for uid in st.session_state.uid_list:
+    st.sidebar.write("•", uid)
+
+FORM_UID = st.sidebar.selectbox(
+    "🔄 Active Dataset",
+    st.session_state.uid_list if st.session_state.uid_list else [None]
+)
+
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 pages = ["Dashboard", "Explorer", "Downloads", "AI Explain"]
 page = st.sidebar.radio("Navigation", pages)
 
-if st.sidebar.button("🔄 Refresh"):
+if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 
@@ -87,16 +104,16 @@ def fetch_data(uid, token):
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data found")
+    st.warning("No data found for selected dataset")
     st.stop()
 
 # ==============================
 # COLUMN DETECTION
 # ==============================
-def detect(names):
+def detect(keys):
     for c in df.columns:
-        for n in names:
-            if n in c.lower():
+        for k in keys:
+            if k in c.lower():
                 return c
     return None
 
@@ -109,12 +126,12 @@ df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 # ==============================
 # DATE FILTER
 # ==============================
-start_default = df[DATE_COL].min().date()
-end_default = df[DATE_COL].max().date()
+start = df[DATE_COL].min().date()
+end = df[DATE_COL].max().date()
 
 c1, c2 = st.sidebar.columns(2)
-start_date = c1.date_input("Start", start_default)
-end_date = c2.date_input("End", end_default)
+start_date = c1.date_input("Start", start)
+end_date = c2.date_input("End", end)
 
 df = df[(df[DATE_COL] >= pd.to_datetime(start_date)) &
         (df[DATE_COL] <= pd.to_datetime(end_date))]
@@ -132,10 +149,10 @@ else:
 # ==============================
 # THRESHOLDS
 # ==============================
-def adaptive_thresholds(df):
+def thresholds(df):
     t = {}
 
-    if len(num_cols) > 0:
+    if len(num_cols):
         z = np.abs((df[num_cols] - df[num_cols].mean()) /
                    df[num_cols].std().replace(0, 1))
         t["z"] = max(2.5, min(z.stack().quantile(0.95), 4))
@@ -150,17 +167,17 @@ def adaptive_thresholds(df):
 
     return t
 
-thr = adaptive_thresholds(df)
+thr = thresholds(df)
 
 # ==============================
-# FRAUD DETECTION
+# FRAUD
 # ==============================
 if ENUM_COL:
     fr = df.groupby(ENUM_COL)["time_diff"].apply(
         lambda x: (x.fillna(9999) < thr["fast"]).mean()
     )
-    bad_enum = fr[fr > 0.7].index
-    df["fraud_flag"] = df[ENUM_COL].isin(bad_enum)
+    bad = fr[fr > 0.7].index
+    df["fraud_flag"] = df[ENUM_COL].isin(bad)
 else:
     df["fraud_flag"] = False
 
@@ -188,7 +205,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# TEXT QUALITY (QUALITATIVE DATA)
+# QUALITATIVE DATA DETECTION
 # ==============================
 df["text_flag"] = False
 
@@ -197,16 +214,14 @@ text_cols = df.select_dtypes(include=["object"]).columns
 for col in text_cols:
     s = df[col].astype(str).fillna("").str.lower()
 
-    condition = (
+    df["text_flag"] |= (
         s.isin(["", "na", "n/a", "none", "null", "test", "xxx"]) |
         (s.str.len() < 2) |
         (s.str.count(r"[a-zA-Z]") < 1)
     )
 
-    df["text_flag"] = df["text_flag"] | condition
-
 # ==============================
-# CATEGORICAL BIAS DETECTION
+# CATEGORICAL BIAS
 # ==============================
 df["cat_flag"] = False
 
@@ -217,7 +232,7 @@ for col in text_cols:
             df["cat_flag"] = True
 
 # ==============================
-# HOUSEHOLD TREND
+# HOUSEHOLD CHECK
 # ==============================
 df["household_trend_flag"] = False
 
@@ -239,7 +254,7 @@ df["quality_issue_flag"] = (
 )
 
 # ==============================
-# QUALITY SCORE
+# SCORE
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 35
@@ -260,22 +275,15 @@ clean_df = df[df["quality_score"] >= 50]
 flag_df = df[df["quality_score"] < 50]
 
 # ==============================
-# AI EXPLANATION
+# AI EXPLAIN
 # ==============================
 def explain(row):
     r = []
-
-    if row["anomaly_flag"]:
-        r.append("Numeric anomaly detected")
-    if row["text_flag"]:
-        r.append("Poor text quality")
-    if row["fraud_flag"]:
-        r.append("Speed anomaly")
-    if row["household_trend_flag"]:
-        r.append("Household inconsistency")
-    if row["cat_flag"]:
-        r.append("Categorical imbalance")
-
+    if row["anomaly_flag"]: r.append("Numeric anomaly")
+    if row["text_flag"]: r.append("Text issue")
+    if row["fraud_flag"]: r.append("Speed anomaly")
+    if row["household_trend_flag"]: r.append("Household inconsistency")
+    if row["cat_flag"]: r.append("Categorical imbalance")
     return "\n".join(r) if r else "Clean record"
 
 # ==============================
@@ -283,6 +291,12 @@ def explain(row):
 # ==============================
 if page == "Dashboard":
     st.title("📊 REDI Dashboard")
+
+    st.markdown(f"""
+    <div style="background:#0f172a;padding:10px;border-radius:10px;color:white;">
+    📂 Active Dataset UID: {FORM_UID}
+    </div>
+    """, unsafe_allow_html=True)
 
     c1,c2,c3,c4 = st.columns(4)
 
@@ -310,7 +324,7 @@ elif page == "AI Explain":
     st.info(explain(df.loc[i]))
 
 # ==============================
-# DOWNLOADS (FULL + PDF)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
@@ -329,12 +343,10 @@ elif page == "Downloads":
         return out
 
     def pdf_report():
-
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer)
         styles = getSampleStyleSheet()
 
-        # Charts
         fig = plt.figure()
         df["quality_category"].value_counts().plot(kind="bar")
         plt.title("Quality Distribution")
@@ -348,16 +360,15 @@ elif page == "Downloads":
             "Fraud": df["fraud_flag"].sum(),
             "Cat": df["cat_flag"].sum()
         }).plot(kind="bar")
-        plt.title("Issue Breakdown")
+        plt.title("Issues Breakdown")
         c2 = "/tmp/c2.png"
         plt.savefig(c2); plt.close(fig)
 
-        # Narrative
         narrative = f"""
-        The dataset contains {len(df)} records.
-        {len(clean_df)} are clean while {len(flag_df)} are flagged.
-        The system detects both quantitative and qualitative data quality issues.
-        Overall quality score averages {df['quality_score'].mean():.2f}.
+        Dataset contains {len(df)} records.
+        Clean: {len(clean_df)} | Flagged: {len(flag_df)}.
+        Average quality score: {df['quality_score'].mean():.2f}.
+        This report combines quantitative and qualitative data validation.
         """
 
         content = [
