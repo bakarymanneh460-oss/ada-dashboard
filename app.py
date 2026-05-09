@@ -1,25 +1,24 @@
 import streamlit as st
 import pandas as pd
-import io
-import requests
-from datetime import datetime
 import numpy as np
+import requests
+import io
+import hashlib
+from datetime import datetime, timedelta
 
 import plotly.express as px
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-from sklearn.ensemble import IsolationForest
+# ==============================
+# PAGE CONFIG
+# ==============================
+st.set_page_config(page_title="REDI SaaS Platform", layout="wide")
 
 # ==============================
-# CONFIG
-# ==============================
-st.set_page_config(page_title="REDI Data Quality System", layout="wide")
-
-# ==============================
-# STYLE (RESTORED UI)
+# STYLES (RESTORED ENTERPRISE UI)
 # ==============================
 st.markdown("""
 <style>
@@ -27,22 +26,27 @@ st.markdown("""
 section[data-testid="stSidebar"] {
     background-color:#1e3a8a !important;
 }
+
 section[data-testid="stSidebar"] * {
     color:white !important;
 }
+
 section[data-testid="stSidebar"] input {
     background:white !important;
     color:black !important;
 }
 
+/* KPI CARDS */
 .kpi-card {
-    padding:20px;
+    padding:18px;
     border-radius:12px;
     color:white;
     text-align:center;
     font-weight:bold;
+    box-shadow:0px 4px 10px rgba(0,0,0,0.15);
 }
 
+/* BUTTONS */
 .btn-green {
     background-color:#16a34a;
     color:white;
@@ -63,167 +67,200 @@ section[data-testid="stSidebar"] input {
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIDEBAR (ALWAYS VISIBLE)
+# SESSION INIT
 # ==============================
-st.sidebar.title("📊 REDI System")
-
-FORM_UID = st.sidebar.text_input("Form UID")
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
-
-# ==============================
-# LOGIN SYSTEM
-# ==============================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+    st.session_state.user = None
     st.session_state.role = None
-    st.session_state.username = None
+    st.session_state.form_uid = None
+    st.session_state.logs = []
+    st.session_state.last_action = datetime.now()
 
+# ==============================
+# USERS (HASHED)
+# ==============================
+USERS = {
+    "admin": {
+        "password": hashlib.sha256("admin123".encode()).hexdigest(),
+        "role": "admin",
+        "form_uid": None
+    },
+    "enum1": {
+        "password": hashlib.sha256("enum123".encode()).hexdigest(),
+        "role": "enumerator",
+        "form_uid": "LOCKED_FORM_UID_1"
+    },
+    "viewer1": {
+        "password": hashlib.sha256("view123".encode()).hexdigest(),
+        "role": "viewer",
+        "form_uid": "LOCKED_FORM_UID_2"
+    }
+}
+
+# ==============================
+# LOGGING SYSTEM
+# ==============================
+def log(action):
+    st.session_state.logs.append(
+        f"{datetime.now()} | {st.session_state.user} | {action}"
+    )
+
+# ==============================
+# SESSION TIMEOUT (15 MIN)
+# ==============================
+if st.session_state.auth:
+    if datetime.now() - st.session_state.last_action > timedelta(minutes=15):
+        st.warning("Session expired")
+        st.session_state.auth = False
+        st.rerun()
+
+    st.session_state.last_action = datetime.now()
+
+# ==============================
+# LOGIN FUNCTION
+# ==============================
 def login(username, password):
-    users = st.secrets["auth"]["users"]
-    for u in users:
-        if u["username"] == username and u["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.role = u["role"]
-            st.session_state.username = username
+    if username in USERS:
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+
+        if USERS[username]["password"] == hashed:
+            st.session_state.auth = True
+            st.session_state.user = username
+            st.session_state.role = USERS[username]["role"]
+            st.session_state.form_uid = USERS[username]["form_uid"]
+
+            log("LOGIN")
             return True
     return False
 
 def logout():
-    st.session_state.logged_in = False
+    log("LOGOUT")
+    st.session_state.auth = False
+    st.session_state.user = None
     st.session_state.role = None
-    st.session_state.username = None
+    st.session_state.form_uid = None
 
-if not st.session_state.logged_in:
+# ==============================
+# LOGIN PAGE
+# ==============================
+if not st.session_state.auth:
 
-    st.sidebar.subheader("🔐 Login")
+    st.title("📊 REDI SaaS Platform")
 
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+    with st.form("login"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
 
-    if st.sidebar.button("Login"):
-        if login(username, password):
-            st.rerun()
-        else:
-            st.sidebar.error("Invalid credentials")
+        if submit:
+            if login(u, p):
+                st.success("Login successful")
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
 
-    st.warning("Please login to continue")
     st.stop()
 
-st.sidebar.success(f"Logged in as {st.session_state.username}")
+# ==============================
+# SIDEBAR (POST LOGIN)
+# ==============================
+st.sidebar.title("📊 REDI System")
+
+st.sidebar.success(f"User: {st.session_state.user}")
+st.sidebar.info(f"Role: {st.session_state.role}")
 
 if st.sidebar.button("Logout"):
     logout()
     st.rerun()
 
 # ==============================
-# NAVIGATION
+# FORM UID (SAAS LOCKED)
 # ==============================
-pages = ["Dashboard", "Explorer", "Downloads"]
+FORM_UID = st.session_state.form_uid
 
 if st.session_state.role == "admin":
-    pages.append("Admin")
+    FORM_UID = st.sidebar.text_input("Form UID (Admin)")
+else:
+    st.sidebar.code(FORM_UID or "NO ACCESS")
 
-page = st.sidebar.radio("Navigation", pages)
+if not FORM_UID:
+    st.error("Form UID not assigned")
+    st.stop()
 
 # ==============================
 # FETCH DATA
 # ==============================
 @st.cache_data(ttl=120)
-def fetch_data(uid, token):
-    if not uid:
-        return pd.DataFrame()
-
-    headers = {"Authorization": f"Token {token}"} if token else {}
+def fetch_data(uid):
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    data_all = []
+    all_data = []
     while url:
         try:
-            r = requests.get(url, headers=headers)
-            if r.status_code != 200:
-                break
-            data = r.json()
-            data_all.extend(data.get("results", []))
-            url = data.get("next")
+            r = requests.get(url)
+            j = r.json()
+            all_data.extend(j.get("results", []))
+            url = j.get("next")
         except:
             break
 
-    return pd.json_normalize(data_all)
+    return pd.json_normalize(all_data)
 
-df = fetch_data(FORM_UID, KOBO_TOKEN)
+df = fetch_data(FORM_UID)
 
 if df.empty:
-    st.warning("No data found")
+    st.warning("No data available")
     st.stop()
 
 # ==============================
-# COLUMN DETECTION (FIXED)
+# COLUMN DETECTION
 # ==============================
 def detect(keys):
-    for col in df.columns:
+    for c in df.columns:
         for k in keys:
-            if k in col.lower():
-                return col
+            if k in c.lower():
+                return c
     return None
 
-DATE_COL = detect(["submission", "date", "time"]) or "_submission_time"
-ENUM_COL = detect(["enum", "interviewer", "user"])
-HH_COL = detect(["household", "hh", "id"])
+DATE_COL = detect(["submission", "time", "date"]) or "_submission_time"
 
 if DATE_COL in df.columns:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # ==============================
-# NUMERIC COLUMNS
+# ANOMALY ENGINE
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
-# ==============================
-# ANOMALY DETECTION
-# ==============================
 df["anomaly_flag"] = False
-df["fraud_flag"] = False
 df["text_flag"] = False
+df["fraud_flag"] = False
 
-# ---- Numeric anomaly
 if len(num_cols) > 0:
-    z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std().replace(0,1))
+    z = np.abs((df[num_cols] - df[num_cols].mean()) /
+               df[num_cols].std().replace(0, 1))
     df["anomaly_flag"] = z.max(axis=1) > 2.5
 
-# ---- Text anomaly
-for col in df.select_dtypes(include=["object"]).columns:
-    s = df[col].astype(str).str.lower()
-    df["text_flag"] |= s.str.len() < 2
+for c in df.select_dtypes(include=["object"]).columns:
+    df["text_flag"] |= df[c].astype(str).str.len() < 2
 
-# ---- Fraud detection
-if ENUM_COL and DATE_COL in df.columns:
-    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
-
-    fast_users = df.groupby(ENUM_COL)["time_diff"].apply(
-        lambda x: (x < 60).mean() > 0.6
-    )
-
-    df["fraud_flag"] = df[ENUM_COL].isin(fast_users[fast_users].index)
+if DATE_COL in df.columns:
+    df["time_diff"] = df[DATE_COL].diff().dt.total_seconds()
+    df["fraud_flag"] = df["time_diff"] < 60
 
 # ==============================
-# AI EXPLANATION (PLAIN ENGLISH)
+# AI EXPLANATION
 # ==============================
 def explain(row):
-    reasons = []
-
+    r = []
     if row["anomaly_flag"]:
-        reasons.append("Unusual numeric values compared to dataset patterns")
-
+        r.append("Unusual numeric pattern detected")
     if row["text_flag"]:
-        reasons.append("Missing or invalid text responses")
-
+        r.append("Invalid text response")
     if row["fraud_flag"]:
-        reasons.append("Suspicious rapid submission pattern detected")
-
-    if not reasons:
-        return "No issues detected — data is consistent"
-
-    return " | ".join(reasons)
+        r.append("Rapid submission detected")
+    return " | ".join(r) if r else "Clean record"
 
 df["ai_explanation"] = df.apply(explain, axis=1)
 
@@ -234,116 +271,84 @@ df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 40
 df.loc[df["text_flag"], "quality_score"] -= 20
 df.loc[df["fraud_flag"], "quality_score"] -= 20
-df["quality_score"] = df["quality_score"].clip(0,100)
+df["quality_score"] = df["quality_score"].clip(0, 100)
 
 clean_df = df[df["quality_score"] >= 60]
 flag_df = df[df["quality_score"] < 60]
 
 # ==============================
-# DASHBOARD (PLOTLY)
+# DASHBOARD
 # ==============================
-if page == "Dashboard":
+st.title("📊 REDI SaaS Dashboard")
 
-    st.title("📊 REDI Data Quality Dashboard")
+c1, c2, c3, c4 = st.columns(4)
 
-    c1, c2, c3, c4 = st.columns(4)
+c1.markdown(f'<div class="kpi-card" style="background:#2563eb">Total<br>{len(df)}</div>', unsafe_allow_html=True)
+c2.markdown(f'<div class="kpi-card" style="background:#16a34a">Clean<br>{len(clean_df)}</div>', unsafe_allow_html=True)
+c3.markdown(f'<div class="kpi-card" style="background:#dc2626">Flagged<br>{len(flag_df)}</div>', unsafe_allow_html=True)
+c4.markdown(f'<div class="kpi-card" style="background:#7c3aed">Score<br>{df["quality_score"].mean():.1f}</div>', unsafe_allow_html=True)
 
-    c1.markdown(f'<div class="kpi-card" style="background:#2563eb">Total<br>{len(df)}</div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="kpi-card" style="background:#16a34a">Clean<br>{len(clean_df)}</div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="kpi-card" style="background:#dc2626">Flagged<br>{len(flag_df)}</div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed">Score<br>{df["quality_score"].mean():.1f}</div>', unsafe_allow_html=True)
+fig = px.bar(
+    x=["Clean", "Flagged"],
+    y=[len(clean_df), len(flag_df)],
+    color=["Clean", "Flagged"],
+    color_discrete_map={"Clean": "#16a34a", "Flagged": "#dc2626"}
+)
 
-    fig1 = px.bar(
-        x=["Clean", "Flagged"],
-        y=[len(clean_df), len(flag_df)],
-        color=["Clean", "Flagged"],
-        color_discrete_map={"Clean":"#16a34a","Flagged":"#dc2626"}
-    )
-    st.plotly_chart(fig1, use_container_width=True)
-
-    fig2 = px.histogram(df, x="quality_score", nbins=10)
-    st.plotly_chart(fig2, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True)
 
 # ==============================
 # EXPLORER
 # ==============================
-elif page == "Explorer":
-    tab1, tab2 = st.tabs(["Clean", "Flagged"])
+st.subheader("Data Explorer")
 
-    tab1.dataframe(clean_df)
-    tab2.dataframe(flag_df[["quality_score","ai_explanation"]])
-
-# ==============================
-# DOWNLOADS (FULL SYSTEM)
-# ==============================
-elif page == "Downloads":
-
-    st.title("📥 Export Center")
-
-    def to_excel(data):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            data.to_excel(writer, index=False)
-        output.seek(0)
-        return output
-
-    def pdf():
-
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer)
-        styles = getSampleStyleSheet()
-
-        elements = []
-
-        try:
-            elements.append(Image("assets/logo.png", width=80, height=80))
-        except:
-            pass
-
-        elements.append(Paragraph("REDI DATA QUALITY REPORT", styles["Title"]))
-        elements.append(Spacer(1, 10))
-
-        table = Table([
-            ["Metric","Value"],
-            ["Total",len(df)],
-            ["Clean",len(clean_df)],
-            ["Flagged",len(flag_df)],
-            ["Avg Score",f"{df['quality_score'].mean():.2f}"]
-        ])
-
-        table.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.grey),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("GRID",(0,0),(-1,-1),0.5,colors.black)
-        ]))
-
-        elements.append(table)
-        elements.append(Spacer(1,20))
-        elements.append(Paragraph(f"Generated: {datetime.now()}", styles["Normal"]))
-
-        doc.build(elements)
-        buffer.seek(0)
-        return buffer
-
-    st.download_button("Full Excel", to_excel(df), "full.xlsx")
-    st.download_button("Clean Excel", to_excel(clean_df), "clean.xlsx")
-    st.download_button("Flagged Excel", to_excel(flag_df), "flagged.xlsx")
-    st.download_button("PDF Report", pdf(), "report.pdf")
+if st.session_state.role == "admin":
+    st.dataframe(df)
+elif st.session_state.role == "enumerator":
+    st.dataframe(clean_df)
+else:
+    st.dataframe(clean_df[["quality_score"]])
 
 # ==============================
-# ADMIN PANEL
+# EXPORTS
 # ==============================
-elif page == "Admin":
+st.subheader("Exports")
 
-    st.title("🔐 Admin Panel")
+def to_excel(data):
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        data.to_excel(writer, index=False)
+    out.seek(0)
+    return out
 
-    st.subheader("System Overview")
-    st.write(df.describe(include="all"))
+def pdf():
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
 
-    st.subheader("AI Explanations")
-    st.dataframe(df[df["quality_score"] < 60][["quality_score","ai_explanation"]])
+    elements = [
+        Paragraph("REDI SaaS REPORT", styles["Title"]),
+        Spacer(1, 10),
+        Paragraph(f"Total: {len(df)}", styles["Normal"]),
+        Paragraph(f"Clean: {len(clean_df)}", styles["Normal"]),
+        Paragraph(f"Flagged: {len(flag_df)}", styles["Normal"]),
+        Paragraph(f"Score: {df['quality_score'].mean():.2f}", styles["Normal"]),
+        Spacer(1, 10),
+        Paragraph(f"Generated: {datetime.now()}", styles["Normal"]),
+    ]
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+st.download_button("Full Excel", to_excel(df), "full.xlsx")
+st.download_button("Clean Excel", to_excel(clean_df), "clean.xlsx")
+st.download_button("Flagged Excel", to_excel(flag_df), "flagged.xlsx")
+st.download_button("PDF Report", pdf(), "report.pdf")
 
 # ==============================
-# FOOTER
+# AUDIT LOGS (ADMIN ONLY)
 # ==============================
-st.caption(f"Updated {datetime.now()}")
+if st.session_state.role == "admin":
+    st.subheader("🔐 Audit Logs")
+    st.text("\n".join(st.session_state.logs))
