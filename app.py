@@ -14,7 +14,7 @@ from sklearn.ensemble import IsolationForest
 st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", layout="wide")
 
 # ==============================
-# STYLE (RESTORED)
+# STYLE
 # ==============================
 st.markdown("""
 <style>
@@ -171,7 +171,7 @@ total, valid, bad = len(df), len(clean_df), len(flag_df)
 score = (valid/total*100) if total else 0
 
 # ==============================
-# DASHBOARD (COLORED KPIs RESTORED)
+# DASHBOARD
 # ==============================
 if page == "Dashboard":
 
@@ -190,12 +190,16 @@ if page == "Dashboard":
 # EXPLORER
 # ==============================
 elif page == "Explorer":
+
     tab1, tab2 = st.tabs(["Clean", "Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
 
+    st.subheader("🔍 Flag Explanation Summary")
+    st.dataframe(flag_df["flag_reason"].value_counts().reset_index())
+
 # ==============================
-# DOWNLOADS (COLORED BUTTONS RESTORED)
+# DOWNLOADS
 # ==============================
 elif page == "Downloads":
 
@@ -206,15 +210,58 @@ elif page == "Downloads":
         output.seek(0)
         return output
 
-    col1,col2,col3 = st.columns(3)
+    def full_excel():
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            clean_df.to_excel(writer, index=False, sheet_name="Clean")
+            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
+
+            summary = pd.DataFrame({
+                "Metric": ["Total", "Valid", "Flagged", "Score"],
+                "Value": [total, valid, bad, score]
+            })
+            summary.to_excel(writer, sheet_name="Summary", index=False)
+
+        output.seek(0)
+        return output
+
+    def generate_pdf():
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+
+        content = [
+            Paragraph("REDI Data Quality Summary Report", styles['Title']),
+            Spacer(1, 12),
+            Paragraph(f"Total Records: {total}", styles['Normal']),
+            Paragraph(f"Valid Records: {valid}", styles['Normal']),
+            Paragraph(f"Flagged Records: {bad}", styles['Normal']),
+            Paragraph(f"Quality Score: {score:.2f}%", styles['Normal']),
+        ]
+
+        doc.build(content)
+        buffer.seek(0)
+        return buffer
+
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
+        st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
+        st.download_button("", full_excel(), "redi_full.xlsx")
+
+    with col2:
         st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
         st.download_button("", to_excel(clean_df), "clean.xlsx")
 
-    with col2:
+    with col3:
         st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>', unsafe_allow_html=True)
         st.download_button("", to_excel(flag_df), "flagged.xlsx")
 
+    with col4:
+        st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
+        st.download_button("", generate_pdf(), "report.pdf")
+
+# ==============================
 # FOOTER
+# ==============================
 st.caption(f"Updated {datetime.now()}")
