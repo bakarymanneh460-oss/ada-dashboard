@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import io
@@ -9,25 +8,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from sklearn.ensemble import IsolationForest
 
-# ==============================
 # CONFIG
-# ==============================
 st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", layout="wide")
 
-# ==============================
-# STYLE
-# ==============================
-st.markdown("""
-<style>
-section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
-section[data-testid="stSidebar"] * {color:white !important;}
-section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================
 # SIDEBAR
-# ==============================
 st.sidebar.title("📊 REDI Universal Data System")
 
 FORM_UID = st.sidebar.text_input("Form UID")
@@ -42,9 +26,7 @@ if st.sidebar.button("🔄 Refresh"):
     st.cache_data.clear()
     st.rerun()
 
-# ==============================
 # FETCH
-# ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
     if not uid:
@@ -75,9 +57,7 @@ if df.empty:
     st.warning("No data found")
     st.stop()
 
-# ==============================
 # DETECT COLUMNS
-# ==============================
 def detect(names):
     for col in df.columns:
         for n in names:
@@ -97,21 +77,18 @@ if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
     df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
-# ==============================
 # ANOMALY DETECTION + EXPLANATION
-# ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
-
-    std = df[num_cols].std().replace(0,1)
+    std = df[num_cols].std().replace(0, 1)
     z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
     z_flag = (z.max(axis=1) > 3)
 
     Q1 = df[num_cols].quantile(0.25)
     Q3 = df[num_cols].quantile(0.75)
     IQR = Q3 - Q1
-    iqr_flag = ((df[num_cols] < (Q1 - 1.5*IQR)) | (df[num_cols] > (Q3 + 1.5*IQR))).any(axis=1)
+    iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) | (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
 
     try:
         iso = IsolationForest(contamination=ANOMALY_CONTAMINATION, random_state=42)
@@ -124,22 +101,23 @@ if len(num_cols) > 0:
     explanations = []
     for i in range(len(df)):
         r = []
-        if z_flag.iloc[i]: r.append("Extreme value (Z-score)")
-        if iqr_flag.iloc[i]: r.append("Outlier (IQR)")
-        if iso_flag[i]: r.append("Pattern anomaly (ML)")
-        if missing_flag.iloc[i]: r.append("Missing data")
+        if z_flag.iloc[i]:
+            r.append("Extreme value (Z-score)")
+        if iqr_flag.iloc[i]:
+            r.append("Outlier (IQR)")
+        if iso_flag[i]:
+            r.append("Pattern anomaly (ML)")
+        if missing_flag.iloc[i]:
+            r.append("Missing data")
         explanations.append(", ".join(r) if r else "Clean")
 
     df["flag_reason"] = explanations
     df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
-
 else:
     df["anomaly_flag"] = False
     df["flag_reason"] = "No numeric data"
 
-# ==============================
 # ENUMERATOR FRAUD
-# ==============================
 if ENUM_COL and DATE_COL:
     df = df.sort_values(DATE_COL)
     df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
@@ -156,29 +134,22 @@ if ENUM_COL and DATE_COL:
 else:
     df["fraud_flag"] = False
 
-# ==============================
 # HOUSEHOLD TRACKING
-# ==============================
 if HH_COL and "Month" in df.columns:
     hh_tracking = df.groupby(HH_COL)["Month"].nunique().reset_index(name="months_recorded")
     hh_tracking["completeness_%"] = (hh_tracking["months_recorded"]/12*100).clip(upper=100)
 else:
     hh_tracking = pd.DataFrame()
 
-# ==============================
 # SPLIT
-# ==============================
 clean_df = df[~df["anomaly_flag"]]
 flag_df = df[df["anomaly_flag"]]
 
 total, valid, bad = len(df), len(clean_df), len(flag_df)
 score = (valid/total*100) if total else 0
 
-# ==============================
 # DASHBOARD
-# ==============================
 if page == "Dashboard":
-
     st.title("📊 REDI Data Quality Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
@@ -199,25 +170,16 @@ if page == "Dashboard":
         st.subheader("Household Tracking")
         st.dataframe(hh_tracking)
 
-# ==============================
 # EXPLORER
-# ==============================
 elif page == "Explorer":
-
     tab1, tab2 = st.tabs(["Clean", "Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
 
-    st.subheader("🔍 Flag Explanation Summary")
-    st.dataframe(
-        flag_df["flag_reason"].value_counts().reset_index().rename(
-            columns={"index": "Reason", "flag_reason": "Count"}
-        )
-    )
+    st.subheader("Flag Explanation Summary")
+    st.dataframe(flag_df["flag_reason"].value_counts())
 
-# ==============================
 # DOWNLOADS
-# ==============================
 elif page == "Downloads":
 
     def to_excel(data):
@@ -254,14 +216,10 @@ elif page == "Downloads":
         return buffer
 
     c1,c2,c3,c4 = st.columns(4)
+    c1.download_button("Full Excel", full_excel(), "full.xlsx")
+    c2.download_button("Clean Excel", to_excel(clean_df), "clean.xlsx")
+    c3.download_button("Flagged Excel", to_excel(flag_df), "flagged.xlsx")
+    c4.download_button("PDF Report", generate_pdf(), "report.pdf")
 
-    c1.download_button("📊 Full Excel", full_excel(), "full.xlsx")
-    c2.download_button("✅ Clean Excel", to_excel(clean_df), "clean.xlsx")
-    c3.download_button("⚠️ Flagged Excel", to_excel(flag_df), "flagged.xlsx")
-    c4.download_button("📄 PDF Report", generate_pdf(), "report.pdf")
-
-# ==============================
 # FOOTER
-# ==============================
 st.caption(f"Updated {datetime.now()}")
-```
