@@ -6,10 +6,10 @@ import plotly.express as px
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI Enterprise UID SaaS", layout="wide")
+st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# THEME (BLUE)
+# THEME
 # ==============================
 st.markdown("""
 <style>
@@ -26,7 +26,7 @@ section[data-testid="stSidebar"] {
 """, unsafe_allow_html=True)
 
 # ==============================
-# USERS (MULTI-USER SYSTEM)
+# USERS (SIMPLE RBAC)
 # ==============================
 USERS = {
     "admin": {
@@ -38,11 +38,6 @@ USERS = {
         "password": "user123",
         "role": "user",
         "uids": ["aQJmYa6Z9mJ5qwdw8RrQcj"]
-    },
-    "user2": {
-        "password": "user456",
-        "role": "user",
-        "uids": ["demoUID123"]
     }
 }
 
@@ -58,7 +53,7 @@ if "auth" not in st.session_state:
 # ==============================
 if not st.session_state.auth:
 
-    st.title("🔐 REDI Enterprise Login")
+    st.title("🔐 REDI ADA Login System")
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -78,7 +73,7 @@ if not st.session_state.auth:
 # ==============================
 user = USERS[st.session_state.user]
 
-st.sidebar.title("Enterprise Panel")
+st.sidebar.title("REDI ADA System")
 st.sidebar.success(st.session_state.user)
 
 if st.sidebar.button("Logout"):
@@ -86,33 +81,31 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==============================
-# ADMIN DASHBOARD
+# ADMIN PANEL
 # ==============================
 if user["role"] == "admin":
     st.sidebar.subheader("🔐 Admin Dashboard")
-    st.write("Users in system:")
     st.dataframe(pd.DataFrame(USERS).T)
 
 # ==============================
-# UID ACCESS CONTROL
+# UID ACCESS
 # ==============================
-st.title("📊 UID Data Dashboard")
+st.title("📊 REDI ADA UID Dashboard")
 
 if user["uids"][0] == "ALL":
-    uid = st.text_input("Enter ANY UID (Admin Access)")
+    uid = st.text_input("Enter UID")
 else:
-    uid = st.selectbox("Select Your UID", user["uids"])
+    uid = st.selectbox("Select UID", user["uids"])
 
 # ==============================
-# FETCH KOBO DATA
+# KOBO DATA FETCH
 # ==============================
 def fetch_kobo(uid):
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
     r = requests.get(url)
     if r.status_code != 200:
         return pd.DataFrame()
-    data = r.json().get("results", [])
-    return pd.json_normalize(data)
+    return pd.json_normalize(r.json().get("results", []))
 
 df = fetch_kobo(uid)
 
@@ -121,19 +114,16 @@ if df.empty:
     st.stop()
 
 # ==============================
-# AI EXPLANATION ENGINE
+# AI ENGINE
 # ==============================
 def explain(row):
     reasons = []
     if "value" in row and row["value"] > 80:
         reasons.append("High value detected")
-    if len(reasons) == 0:
+    if not reasons:
         return "Normal record"
     return " | ".join(reasons)
 
-# ==============================
-# ANALYTICS
-# ==============================
 if "value" in df.columns:
     df["score"] = 100 - df["value"]
 else:
@@ -175,22 +165,18 @@ fig = px.bar(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# ==============================
-# DATA VIEW
-# ==============================
 st.dataframe(df)
 
 # ==============================
-# AI EXPLANATION VIEW
+# AI EXPLANATION
 # ==============================
-st.subheader("🧠 AI Explanation (Why Flagged)")
-
+st.subheader("🧠 AI Explanation Engine")
 st.dataframe(df[["status", "AI_Explanation"]])
 
 # ==============================
 # EXPORTS
 # ==============================
-st.subheader("📦 Exports")
+st.subheader("📦 Export Data")
 
 st.download_button("Full Data", df.to_csv(index=False), "full.csv")
 st.download_button("Clean Data", clean_df.to_csv(index=False), "clean.csv")
