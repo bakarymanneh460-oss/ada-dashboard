@@ -97,22 +97,14 @@ if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 # ==============================
-# DATE FILTER (RESTORED)
+# DATE FILTER
 # ==============================
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
     c1, c2 = st.sidebar.columns(2)
-
-    start_date = c1.date_input(
-        "Start Date",
-        value=df[DATE_COL].min().date() if not df[DATE_COL].isna().all() else datetime.today()
-    )
-
-    end_date = c2.date_input(
-        "End Date",
-        value=df[DATE_COL].max().date() if not df[DATE_COL].isna().all() else datetime.today()
-    )
+    start_date = c1.date_input("Start Date", df[DATE_COL].min().date())
+    end_date = c2.date_input("End Date", df[DATE_COL].max().date())
 
     df = df[
         (df[DATE_COL] >= pd.to_datetime(start_date)) &
@@ -120,17 +112,21 @@ if DATE_COL:
     ]
 
 # ==============================
-# FRAUD DETECTION
+# FRAUD DETECTION (IMPROVED)
 # ==============================
 if ENUM_COL and DATE_COL:
     df = df.sort_values(DATE_COL)
     df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
-    df["fraud_flag"] = df["time_diff"] < FAST_THRESHOLD
+
+    fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < FAST_THRESHOLD).mean())
+    suspicious_enum = fraud_ratio[fraud_ratio > 0.5].index
+
+    df["fraud_flag"] = df[ENUM_COL].isin(suspicious_enum)
 else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY DETECTION
+# NUMERIC ANOMALY (BALANCED)
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
@@ -144,38 +140,43 @@ if len(num_cols) > 0:
     iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) | (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
 
     try:
-        iso_flag = IsolationForest(
-            contamination=ANOMALY_CONTAMINATION,
-            random_state=42
-        ).fit_predict(df[num_cols].fillna(0)) == -1
+        iso_flag = IsolationForest(contamination=ANOMALY_CONTAMINATION, random_state=42)\
+            .fit_predict(df[num_cols].fillna(0)) == -1
     except:
         iso_flag = pd.Series([False]*len(df))
 
     missing_flag = df[num_cols].isna().sum(axis=1) > 0
 
-    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
+    df["numeric_score"] = (
+        z_flag.astype(int) +
+        iqr_flag.astype(int) +
+        iso_flag.astype(int) +
+        missing_flag.astype(int)
+    )
+
+    df["anomaly_flag"] = df["numeric_score"] >= 2  # KEY FIX
 else:
     df["anomaly_flag"] = False
 
 # ==============================
-# QUALITATIVE CHECKS
+# TEXT CHECK (LESS AGGRESSIVE)
 # ==============================
 df["text_flag"] = False
 for col in df.select_dtypes(include=["object"]).columns:
     s = df[col].astype(str).str.lower()
     df["text_flag"] |= (
-        s.isin(["", "na", "n/a", "none", "ok", "test"]) |
-        (s.str.len() < 3)
+        s.isin(["", "na", "n/a", "none", "null", "test"]) |
+        (s.str.len() < 2)
     )
 
 # ==============================
-# HOUSEHOLD TREND
+# HOUSEHOLD TREND (TUNED)
 # ==============================
 df["household_trend_flag"] = False
 if HH_COL and len(num_cols) > 0:
     for hh, g in df.groupby(HH_COL):
         for col in num_cols:
-            if len(g[col].dropna()) > 1 and (g[col].pct_change().abs() > 2).any():
+            if len(g[col].dropna()) > 2 and (g[col].pct_change().abs() > 3).any():
                 df.loc[df[HH_COL] == hh, "household_trend_flag"] = True
 
 # ==============================
@@ -184,35 +185,38 @@ if HH_COL and len(num_cols) > 0:
 df["flag_reason"] = (
     df["anomaly_flag"].map({True:"Numeric anomaly",False:""}) +
     df["text_flag"].map({True:", Text issue",False:""}) +
-    df["fraud_flag"].map({True:", Fast submission",False:""}) +
+    df["fraud_flag"].map({True:", Enumerator speed pattern",False:""}) +
     df["household_trend_flag"].map({True:", Household inconsistency",False:""})
 ).str.strip(", ")
 
 df["flag_reason"] = df["flag_reason"].replace("", "Clean")
 
 # ==============================
-# QUALITY SCORE
+# QUALITY SCORE (BALANCED)
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 40
-df.loc[df["text_flag"], "quality_score"] -= 20
-df.loc[df["fraud_flag"], "quality_score"] -= 20
-df.loc[df["household_trend_flag"], "quality_score"] -= 20
+df.loc[df["text_flag"], "quality_score"] -= 15
+df.loc[df["fraud_flag"], "quality_score"] -= 15
+df.loc[df["household_trend_flag"], "quality_score"] -= 15
 df["quality_score"] = df["quality_score"].clip(0, 100)
 
 df["quality_category"] = pd.cut(
     df["quality_score"],
-    bins=[0, 50, 75, 90, 100],
-    labels=["Poor", "Fair", "Good", "Excellent"]
+    bins=[0,50,75,90,100],
+    labels=["Poor","Fair","Good","Excellent"]
 )
 
-clean_df = df[df["quality_score"] >= 75]
-flag_df = df[df["quality_score"] < 75]
+# ==============================
+# SPLIT (LESS STRICT)
+# ==============================
+flag_df = df[df["quality_score"] < 50]
+clean_df = df[df["quality_score"] >= 50]
 
 # ==============================
 # DASHBOARD
 # ==============================
-if page == "Dashboard":
+if page=="Dashboard":
     st.title("📊 REDI Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
@@ -226,42 +230,23 @@ if page == "Dashboard":
 # ==============================
 # EXPLORER
 # ==============================
-elif page == "Explorer":
+elif page=="Explorer":
 
-    st.title("🔍 Data Explorer & Investigation")
-
-    tab1, tab2 = st.tabs(["Clean Data", "Flagged Data"])
+    tab1,tab2 = st.tabs(["Clean","Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
-
-    st.subheader("📊 Flag Summary")
-    st.dataframe(flag_df["flag_reason"].value_counts())
 
     st.subheader("🔎 Investigation Tool")
     search = st.text_input("Search any value")
 
     if search:
         results = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)]
-        st.success(f"{len(results)} results found")
         st.dataframe(results)
-
-        if not results.empty:
-            idx = st.selectbox("Select row index", results.index)
-            row = df.loc[idx]
-
-            st.subheader("🧠 Row Inspection")
-            st.write(row)
-
-            st.info(f"""
-            Quality Score: {row['quality_score']}
-            Category: {row['quality_category']}
-            Reason: {row['flag_reason']}
-            """)
 
 # ==============================
 # DOWNLOADS
 # ==============================
-elif page == "Downloads":
+elif page=="Downloads":
 
     def to_excel(data):
         output = io.BytesIO()
@@ -296,21 +281,21 @@ elif page == "Downloads":
         buffer.seek(0)
         return buffer
 
-    col1,col2,col3,col4 = st.columns(4)
+    c1,c2,c3,c4 = st.columns(4)
 
-    with col1:
+    with c1:
         st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
         st.download_button("", full_excel(), "full.xlsx")
 
-    with col2:
+    with c2:
         st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
         st.download_button("", to_excel(clean_df), "clean.xlsx")
 
-    with col3:
+    with c3:
         st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>', unsafe_allow_html=True)
         st.download_button("", to_excel(flag_df), "flagged.xlsx")
 
-    with col4:
+    with c4:
         st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
         st.download_button("", pdf(), "report.pdf")
 
