@@ -2,8 +2,9 @@ streamlit
 pandas
 numpy
 requests
-matplotlib
-reportlab
-sqlalchemy
-openpyxl
 scikit-learn
+plotly
+reportlab
+openpyxl
+streamlit-authenticator
+PyYAML
