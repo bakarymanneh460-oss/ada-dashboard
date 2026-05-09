@@ -19,7 +19,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 import plotly.express as px
 
 # =========================================
-# CONFIG
+# PAGE CONFIG
 # =========================================
 st.set_page_config(
     page_title="REDI Automated Data Quality Monitoring System",
@@ -27,35 +27,39 @@ st.set_page_config(
     page_icon="📊"
 )
 
-APP_NAME = os.getenv("APP_NAME", "REDI Automated Data Quality Monitoring System")
-FRAUD_THRESHOLD = float(os.getenv("FRAUD_THRESHOLD", 50))
-AI_CONTAMINATION = float(os.getenv("AI_CONTAMINATION", 0.02))
+# =========================================
+# CONFIG
+# =========================================
+APP_NAME = os.getenv(
+    "APP_NAME",
+    "REDI Automated Data Quality Monitoring System"
+)
 
 ENABLE_AI = True
-ENABLE_AUDIT = True
-ENABLE_LOGGING = True
+
+# safer production values
+AI_CONTAMINATION = 0.005
+FRAUD_THRESHOLD = 70
 
 # =========================================
 # LOGGING
 # =========================================
-if ENABLE_LOGGING:
+os.makedirs("logs", exist_ok=True)
 
-    os.makedirs("logs", exist_ok=True)
-
-    logging.basicConfig(
-        filename="logs/redi.log",
-        level=logging.ERROR,
-        format="%(asctime)s %(levelname)s %(message)s"
-    )
+logging.basicConfig(
+    filename="logs/redi.log",
+    level=logging.ERROR,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 # =========================================
-# SESSION STATE
+# SESSION
 # =========================================
 if "loaded" not in st.session_state:
     st.session_state.loaded = True
 
 # =========================================
-# CUSTOM STYLE
+# STYLE
 # =========================================
 st.markdown("""
 <style>
@@ -79,14 +83,6 @@ section[data-testid="stSidebar"] input {
     color:white;
     text-align:center;
     box-shadow:0 4px 10px rgba(0,0,0,0.2);
-}
-
-.small-box {
-    padding:10px;
-    border-radius:10px;
-    background:#f3f4f6;
-    text-align:center;
-    font-weight:bold;
 }
 
 </style>
@@ -117,7 +113,10 @@ if st.sidebar.button("🔄 Refresh System"):
     st.rerun()
 
 st.sidebar.success("System Online")
-st.sidebar.info(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
+
+st.sidebar.info(
+    f"Updated: {datetime.now().strftime('%H:%M:%S')}"
+)
 
 # =========================================
 # FETCH DATA
@@ -128,7 +127,9 @@ def fetch_data(uid, token):
     if not uid:
         return pd.DataFrame()
 
-    headers = {"Authorization": f"Token {token}"} if token else {}
+    headers = {
+        "Authorization": f"Token {token}"
+    } if token else {}
 
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
@@ -138,28 +139,45 @@ def fetch_data(uid, token):
 
         try:
 
-            r = requests.get(url, headers=headers, timeout=30)
+            r = requests.get(
+                url,
+                headers=headers,
+                timeout=30
+            )
 
             if r.status_code != 200:
-                logging.error(f"Kobo API Error: {r.status_code}")
+
+                logging.error(
+                    f"Kobo API Error: {r.status_code}"
+                )
+
                 break
 
             data = r.json()
 
-            all_data.extend(data.get("results", []))
+            all_data.extend(
+                data.get("results", [])
+            )
 
             url = data.get("next")
 
         except Exception as e:
+
             logging.error(str(e))
+
             break
 
     return pd.json_normalize(all_data)
 
+# =========================================
+# LOAD DATA
+# =========================================
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
+
     st.warning("No data found")
+
     st.stop()
 
 # =========================================
@@ -176,17 +194,45 @@ def detect(names):
 
     return None
 
-DATE_COL = detect(["submission_time", "date", "time"])
-HH_COL = detect(["hh", "household", "id"])
-ENUM_COL = detect(["enum", "enumerator", "name", "user"])
-REGION_COL = detect(["region", "district", "area"])
-GPS_COL = detect(["gps", "latitude", "longitude"])
+DATE_COL = detect([
+    "submission_time",
+    "date",
+    "time"
+])
+
+HH_COL = detect([
+    "hh",
+    "household",
+    "id"
+])
+
+ENUM_COL = detect([
+    "enum",
+    "enumerator",
+    "name",
+    "user"
+])
+
+REGION_COL = detect([
+    "region",
+    "district",
+    "area"
+])
+
+GPS_COL = detect([
+    "gps",
+    "latitude",
+    "longitude"
+])
 
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 if DATE_COL:
-    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
+    df[DATE_COL] = pd.to_datetime(
+        df[DATE_COL],
+        errors="coerce"
+    )
 
 # =========================================
 # FILTERS
@@ -251,22 +297,32 @@ if search:
 # MONTH
 # =========================================
 if DATE_COL:
-    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
+    df["Month"] = (
+        df[DATE_COL]
+        .dt.to_period("M")
+        .astype(str)
+    )
 
 # =========================================
 # BASIC ANOMALY DETECTION
 # =========================================
-num_cols = df.select_dtypes(include=["number"]).columns
+num_cols = df.select_dtypes(
+    include=["number"]
+).columns
 
 if len(num_cols) > 0:
 
     std = df[num_cols].std().replace(0, 1)
 
-    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+    z = np.abs(
+        (df[num_cols] - df[num_cols].mean()) / std
+    )
 
-    df["anomaly_flag"] = z.max(axis=1) > 3
+    # safer threshold
+    df["anomaly_flag"] = z.max(axis=1) > 4.5
 
 else:
+
     df["anomaly_flag"] = False
 
 # =========================================
@@ -294,6 +350,7 @@ if ENABLE_AI and len(num_cols) > 2:
         df["ai_flag"] = False
 
 else:
+
     df["ai_flag"] = False
 
 # =========================================
@@ -311,7 +368,9 @@ if ENUM_COL and DATE_COL:
 
     perf = df.groupby(ENUM_COL).agg(
         total=("time_diff", "count"),
-        fast=("time_diff", lambda x: (x < 60).sum())
+
+        # safer speed threshold
+        fast=("time_diff", lambda x: (x < 20).sum())
     ).reset_index()
 
     perf["fraud_score"] = (
@@ -325,47 +384,61 @@ if ENUM_COL and DATE_COL:
         how="left"
     )
 
-    df["fraud_flag"] = df["fraud_score"] > FRAUD_THRESHOLD
+    # safer threshold
+    df["fraud_flag"] = (
+        df["fraud_score"] > FRAUD_THRESHOLD
+    )
 
 else:
+
     df["fraud_flag"] = False
 
 # =========================================
-# HOUSEHOLD TRACKING
+# SMART FINAL FLAGS
 # =========================================
-if HH_COL and "Month" in df.columns:
-
-    hh_tracking = (
-        df.groupby(HH_COL)["Month"]
-        .nunique()
-        .reset_index(name="months_recorded")
-    )
-
-    hh_tracking["completeness_%"] = (
-        (hh_tracking["months_recorded"] / 12) * 100
-    ).clip(upper=100)
-
-else:
-
-    hh_tracking = pd.DataFrame()
-
-# =========================================
-# FINAL FLAGS
-# =========================================
-df["final_flag"] = (
-    df["anomaly_flag"] |
-    df["fraud_flag"] |
-    df["ai_flag"]
+df["flag_score"] = (
+    df["anomaly_flag"].astype(int) +
+    df["fraud_flag"].astype(int) +
+    df["ai_flag"].astype(int)
 )
 
+# require at least TWO systems
+df["final_flag"] = df["flag_score"] >= 2
+
+# =========================================
+# SEVERITY LEVELS
+# =========================================
+df["severity"] = "Low"
+
+df.loc[
+    df["flag_score"] == 1,
+    "severity"
+] = "Medium"
+
+df.loc[
+    df["flag_score"] == 2,
+    "severity"
+] = "High"
+
+df.loc[
+    df["flag_score"] >= 3,
+    "severity"
+] = "Critical"
+
+# =========================================
+# CLEAN & FLAGGED
+# =========================================
 clean_df = df[~df["final_flag"]]
+
 flag_df = df[df["final_flag"]]
 
 # =========================================
 # KPIs
 # =========================================
 total = len(df)
+
 valid = len(clean_df)
+
 bad = len(flag_df)
 
 score = (
@@ -383,47 +456,51 @@ if page == "Dashboard":
     c1, c2, c3, c4 = st.columns(4)
 
     c1.markdown(
-        f'''
-        <div class="kpi-card" style="background:#2563eb">
+        f"""
+        <div class="kpi-card"
+        style="background:#2563eb">
         <h3>Total Records</h3>
         <h1>{total}</h1>
         </div>
-        ''',
+        """,
         unsafe_allow_html=True
     )
 
     c2.markdown(
-        f'''
-        <div class="kpi-card" style="background:#16a34a">
+        f"""
+        <div class="kpi-card"
+        style="background:#16a34a">
         <h3>Valid Records</h3>
         <h1>{valid}</h1>
         </div>
-        ''',
+        """,
         unsafe_allow_html=True
     )
 
     c3.markdown(
-        f'''
-        <div class="kpi-card" style="background:#dc2626">
+        f"""
+        <div class="kpi-card"
+        style="background:#dc2626">
         <h3>Flagged</h3>
         <h1>{bad}</h1>
         </div>
-        ''',
+        """,
         unsafe_allow_html=True
     )
 
     c4.markdown(
-        f'''
-        <div class="kpi-card" style="background:#7c3aed">
+        f"""
+        <div class="kpi-card"
+        style="background:#7c3aed">
         <h3>Quality Score</h3>
         <h1>{score:.1f}%</h1>
         </div>
-        ''',
+        """,
         unsafe_allow_html=True
     )
 
     # =====================================
-    # QUALITY CHART
+    # QUALITY OVERVIEW
     # =====================================
     st.subheader("Data Quality Overview")
 
@@ -439,14 +516,19 @@ if page == "Dashboard":
         text="Count"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
     # =====================================
     # ENUMERATOR PERFORMANCE
     # =====================================
     if ENUM_COL:
 
-        st.subheader("Enumerator Performance")
+        st.subheader(
+            "Enumerator Performance"
+        )
 
         enum_perf = (
             df.groupby(ENUM_COL)["final_flag"]
@@ -455,7 +537,9 @@ if page == "Dashboard":
         )
 
         enum_perf["quality_score"] = (
-            1 - enum_perf["sum"] / enum_perf["count"]
+            1 -
+            enum_perf["sum"] /
+            enum_perf["count"]
         ) * 100
 
         st.dataframe(
@@ -467,11 +551,13 @@ if page == "Dashboard":
         )
 
     # =====================================
-    # REGION PERFORMANCE
+    # REGIONAL PERFORMANCE
     # =====================================
     if REGION_COL:
 
-        st.subheader("Regional Performance")
+        st.subheader(
+            "Regional Performance"
+        )
 
         reg = (
             df.groupby(REGION_COL)["final_flag"]
@@ -480,17 +566,24 @@ if page == "Dashboard":
         )
 
         reg["quality_score"] = (
-            1 - reg["sum"] / reg["count"]
+            1 -
+            reg["sum"] /
+            reg["count"]
         ) * 100
 
-        st.dataframe(reg, use_container_width=True)
+        st.dataframe(
+            reg,
+            use_container_width=True
+        )
 
     # =====================================
     # MONTHLY TREND
     # =====================================
     if "Month" in df.columns:
 
-        st.subheader("Monthly Submission Trend")
+        st.subheader(
+            "Monthly Submission Trend"
+        )
 
         monthly = (
             df.groupby("Month")
@@ -505,7 +598,10 @@ if page == "Dashboard":
             markers=True
         )
 
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(
+            fig2,
+            use_container_width=True
+        )
 
 # =========================================
 # EXPLORER
@@ -514,22 +610,31 @@ elif page == "Explorer":
 
     st.title("Data Explorer")
 
-    tab1, tab2 = st.tabs(["Clean Records", "Flagged Records"])
+    tab1, tab2 = st.tabs([
+        "Clean Records",
+        "Flagged Records"
+    ])
 
     with tab1:
-        st.dataframe(clean_df, use_container_width=True)
+        st.dataframe(
+            clean_df,
+            use_container_width=True
+        )
 
     with tab2:
-        st.dataframe(flag_df, use_container_width=True)
+        st.dataframe(
+            flag_df,
+            use_container_width=True
+        )
 
 # =========================================
 # QUALITY ANALYTICS
 # =========================================
 elif page == "Quality Analytics":
 
-    st.title("Advanced Quality Analytics")
-
-    st.subheader("Flag Summary")
+    st.title(
+        "Advanced Quality Analytics"
+    )
 
     summary = pd.DataFrame({
         "Issue": [
@@ -544,7 +649,10 @@ elif page == "Quality Analytics":
         ]
     })
 
-    st.dataframe(summary, use_container_width=True)
+    st.dataframe(
+        summary,
+        use_container_width=True
+    )
 
     fig3 = px.pie(
         summary,
@@ -552,19 +660,10 @@ elif page == "Quality Analytics":
         values="Count"
     )
 
-    st.plotly_chart(fig3, use_container_width=True)
-
-    if HH_COL and not hh_tracking.empty:
-
-        st.subheader("Household Completeness")
-
-        st.dataframe(
-            hh_tracking.sort_values(
-                "completeness_%",
-                ascending=False
-            ),
-            use_container_width=True
-        )
+    st.plotly_chart(
+        fig3,
+        use_container_width=True
+    )
 
 # =========================================
 # DOWNLOADS
@@ -573,9 +672,6 @@ elif page == "Downloads":
 
     st.title("Downloads & Reports")
 
-    # =====================================
-    # EXPORT HELPERS
-    # =====================================
     def to_excel(data):
 
         output = io.BytesIO()
@@ -636,7 +732,9 @@ elif page == "Downloads":
             )
         )
 
-        elements.append(Spacer(1, 12))
+        elements.append(
+            Spacer(1, 12)
+        )
 
         table_data = [
             ["Metric", "Value"],
@@ -649,15 +747,38 @@ elif page == "Downloads":
         table = Table(table_data)
 
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.grey),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
-            ("GRID", (0,0), (-1,-1), 1, colors.black),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            (
+                "BACKGROUND",
+                (0,0),
+                (-1,0),
+                colors.grey
+            ),
+            (
+                "TEXTCOLOR",
+                (0,0),
+                (-1,0),
+                colors.whitesmoke
+            ),
+            (
+                "GRID",
+                (0,0),
+                (-1,-1),
+                1,
+                colors.black
+            ),
+            (
+                "FONTNAME",
+                (0,0),
+                (-1,0),
+                "Helvetica-Bold"
+            ),
         ]))
 
         elements.append(table)
 
-        elements.append(Spacer(1, 20))
+        elements.append(
+            Spacer(1, 20)
+        )
 
         elements.append(
             Paragraph(
@@ -672,12 +793,10 @@ elif page == "Downloads":
 
         return buffer
 
-    # =====================================
-    # DOWNLOAD BUTTONS
-    # =====================================
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
+
         st.download_button(
             "📊 Download Full Excel",
             full_excel(),
@@ -685,6 +804,7 @@ elif page == "Downloads":
         )
 
     with c2:
+
         st.download_button(
             "✅ Download Clean",
             to_excel(clean_df),
@@ -692,6 +812,7 @@ elif page == "Downloads":
         )
 
     with c3:
+
         st.download_button(
             "⚠️ Download Flagged",
             to_excel(flag_df),
@@ -699,6 +820,7 @@ elif page == "Downloads":
         )
 
     with c4:
+
         st.download_button(
             "📄 Download PDF",
             generate_pdf(),
