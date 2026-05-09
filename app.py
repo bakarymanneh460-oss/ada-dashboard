@@ -1,183 +1,229 @@
 import streamlit as st
 import pandas as pd
+import io
 import requests
-import plotly.express as px
+from datetime import datetime
+import numpy as np
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+from sklearn.ensemble import IsolationForest
 
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI ADA System", layout="wide")
+st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", layout="wide")
 
 # ==============================
-# THEME
+# STYLE
 # ==============================
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] {
-    background-color: #0b3d91;
+section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
+section[data-testid="stSidebar"] * {color:white !important;}
+section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
+
+.kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;}
+
+.btn-green {
+    background-color:#16a34a;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
 }
-h1,h2,h3,h4,p,div {
-    color:white !important;
-}
-section[data-testid="stSidebar"] {
-    background-color:#062a63 !important;
+.btn-red {
+    background-color:#dc2626;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================
-# USERS (SIMPLE RBAC)
+# SIDEBAR
 # ==============================
-USERS = {
-    "admin": {
-        "password": "admin123",
-        "role": "admin",
-        "uids": ["ALL"]
-    },
-    "user1": {
-        "password": "user123",
-        "role": "user",
-        "uids": ["aQJmYa6Z9mJ5qwdw8RrQcj"]
-    }
-}
+st.sidebar.title("📊 REDI Universal Data System")
+st.sidebar.caption("Field Data Quality Monitoring System")
 
-# ==============================
-# SESSION
-# ==============================
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-    st.session_state.user = None
+FORM_UID = st.sidebar.text_input("Form UID")
+page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
-# ==============================
-# LOGIN
-# ==============================
-if not st.session_state.auth:
+KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-    st.title("🔐 REDI ADA Login System")
+FAST_THRESHOLD = st.sidebar.slider("Fast Submission Threshold (seconds)", 10, 300, 60)
+ANOMALY_CONTAMINATION = st.sidebar.slider("Anomaly Sensitivity", 0.01, 0.20, 0.05)
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        if username in USERS and USERS[username]["password"] == password:
-            st.session_state.auth = True
-            st.session_state.user = username
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
-    st.stop()
-
-# ==============================
-# USER INFO
-# ==============================
-user = USERS[st.session_state.user]
-
-st.sidebar.title("REDI ADA System")
-st.sidebar.success(st.session_state.user)
-
-if st.sidebar.button("Logout"):
-    st.session_state.auth = False
+if st.sidebar.button("🔄 Refresh"):
+    st.cache_data.clear()
     st.rerun()
 
 # ==============================
-# ADMIN PANEL
+# FETCH
 # ==============================
-if user["role"] == "admin":
-    st.sidebar.subheader("🔐 Admin Dashboard")
-    st.dataframe(pd.DataFrame(USERS).T)
-
-# ==============================
-# UID ACCESS
-# ==============================
-st.title("📊 REDI ADA UID Dashboard")
-
-if user["uids"][0] == "ALL":
-    uid = st.text_input("Enter UID")
-else:
-    uid = st.selectbox("Select UID", user["uids"])
-
-# ==============================
-# KOBO DATA FETCH
-# ==============================
-def fetch_kobo(uid):
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
-    r = requests.get(url)
-    if r.status_code != 200:
+@st.cache_data(ttl=120)
+def fetch_data(uid, token):
+    if not uid:
         return pd.DataFrame()
-    return pd.json_normalize(r.json().get("results", []))
 
-df = fetch_kobo(uid)
+    headers = {"Authorization": f"Token {token}"} if token else {}
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
+
+    all_data = []
+    while url:
+        try:
+            r = requests.get(url, headers=headers)
+            if r.status_code != 200:
+                st.error(f"API Error: {r.status_code}")
+                break
+            data = r.json()
+            all_data.extend(data.get("results", []))
+            url = data.get("next")
+        except Exception as e:
+            st.error(f"Data fetch failed: {e}")
+            break
+
+    return pd.json_normalize(all_data)
+
+with st.spinner("Fetching data..."):
+    df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data found for this UID")
+    st.error("No data found or invalid Form UID")
     st.stop()
 
 # ==============================
-# AI ENGINE
+# SMART DETECTION
 # ==============================
-def explain(row):
-    reasons = []
-    if "value" in row and row["value"] > 80:
-        reasons.append("High value detected")
-    if not reasons:
-        return "Normal record"
-    return " | ".join(reasons)
+def detect(names):
+    for col in df.columns:
+        for n in names:
+            if n in col.lower():
+                return col
+    return None
 
-if "value" in df.columns:
-    df["score"] = 100 - df["value"]
+DATE_COL = detect(["submission_time", "date", "time"])
+HH_COL = detect(["hh", "household", "id"])
+ENUM_COL = detect(["enum", "enumerator", "name", "user"])
+REGION_COL = detect(["region", "district", "area"])
+
+if "_submission_time" in df.columns:
+    DATE_COL = "_submission_time"
+
+if DATE_COL:
+    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
+
+# ==============================
+# FILTERS
+# ==============================
+if DATE_COL:
+    c1, c2 = st.sidebar.columns(2)
+    start = c1.date_input("Start", df[DATE_COL].min())
+    end = c2.date_input("End", df[DATE_COL].max())
+
+    df = df[(df[DATE_COL] >= pd.to_datetime(start)) & (df[DATE_COL] <= pd.to_datetime(end))]
+
+search = st.sidebar.text_input("Search")
+if search:
+    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False).any(), axis=1)]
+
+# ==============================
+# PREP
+# ==============================
+if DATE_COL:
+    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
+
+# ==============================
+# ADVANCED ANOMALY DETECTION
+# ==============================
+num_cols = df.select_dtypes(include=["number"]).columns
+
+if len(num_cols) > 0:
+
+    std = df[num_cols].std().replace(0, 1)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+    z_flag = (z.max(axis=1) > 3)
+
+    Q1 = df[num_cols].quantile(0.25)
+    Q3 = df[num_cols].quantile(0.75)
+    IQR = Q3 - Q1
+
+    iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) |
+                (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
+
+    try:
+        iso = IsolationForest(
+            n_estimators=100,
+            contamination=ANOMALY_CONTAMINATION,
+            random_state=42
+        )
+        iso_pred = iso.fit_predict(df[num_cols].fillna(0))
+        iso_flag = iso_pred == -1
+    except:
+        iso_flag = pd.Series([False]*len(df))
+
+    missing_flag = df[num_cols].isna().sum(axis=1) > 0
+
+    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
+
 else:
-    df["score"] = df.select_dtypes(include='number').mean(axis=1)
+    df["anomaly_flag"] = False
 
-df["status"] = df["score"].apply(lambda x: "Flagged" if x < 40 else "Clean")
-df["AI_Explanation"] = df.apply(explain, axis=1)
+# ==============================
+# SPLIT
+# ==============================
+clean_df = df[~df["anomaly_flag"]]
+flag_df = df[df["anomaly_flag"]]
 
-clean_df = df[df["status"] == "Clean"]
-flagged_df = df[df["status"] == "Flagged"]
+total = len(df)
+valid = len(clean_df)
+bad = len(flag_df)
+score = (valid/total*100) if total else 0
 
 # ==============================
 # DASHBOARD
 # ==============================
-st.markdown(f"## 📊 UID: {uid}")
+if page == "Dashboard":
 
-col1, col2, col3 = st.columns(3)
+    st.title("📊 REDI Automated Data Quality Monitoring System")
 
-col1.metric("Total", len(df))
-col2.metric("Clean", len(clean_df))
-col3.metric("Flagged", len(flagged_df))
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Total", total)
+    c2.metric("Valid", valid)
+    c3.metric("Flagged", bad)
+    c4.metric("Score", f"{score:.1f}%")
 
-chart = pd.DataFrame({
-    "Category": ["Clean", "Flagged"],
-    "Count": [len(clean_df), len(flagged_df)]
-})
-
-fig = px.bar(
-    chart,
-    x="Category",
-    y="Count",
-    color="Category",
-    color_discrete_map={
-        "Clean": "#2ecc71",
-        "Flagged": "#e74c3c"
-    },
-    text="Count"
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-st.dataframe(df)
+    st.bar_chart(pd.DataFrame({
+        "Valid": [valid],
+        "Flagged": [bad]
+    }))
 
 # ==============================
-# AI EXPLANATION
+# EXPLORER
 # ==============================
-st.subheader("🧠 AI Explanation Engine")
-st.dataframe(df[["status", "AI_Explanation"]])
+elif page == "Explorer":
+    st.dataframe(clean_df)
+    st.dataframe(flag_df)
 
 # ==============================
-# EXPORTS
+# DOWNLOADS
 # ==============================
-st.subheader("📦 Export Data")
+elif page == "Downloads":
 
-st.download_button("Full Data", df.to_csv(index=False), "full.csv")
-st.download_button("Clean Data", clean_df.to_csv(index=False), "clean.csv")
-st.download_button("Flagged Data", flagged_df.to_csv(index=False), "flagged.csv")
+    def to_excel(data):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            data.to_excel(writer, index=False)
+        output.seek(0)
+        return output
+
+    st.download_button("Download Clean", to_excel(clean_df))
+    st.download_button("Download Flagged", to_excel(flag_df))
+
+# ==============================
+# FOOTER
+# ==============================
+st.caption(f"Updated {datetime.now()}")
