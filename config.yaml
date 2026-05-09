@@ -1,0 +1,29 @@
+credentials:
+  usernames:
+
+    admin:
+      email: admin@redi.org
+      name: REDI Admin
+      password: admin123
+      role: admin
+
+    supervisor:
+      email: supervisor@redi.org
+      name: REDI Supervisor
+      password: supervisor123
+      role: supervisor
+
+    enumerator:
+      email: enum@redi.org
+      name: REDI Enumerator
+      password: enum123
+      role: enumerator
+
+cookie:
+  expiry_days: 30
+  key: redi_cookie_key
+  name: redi_cookie
+
+preauthorized:
+  emails:
+    - admin@redi.org
