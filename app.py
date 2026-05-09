@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import io
@@ -21,25 +22,7 @@ st.markdown("""
 section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
-
 .kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;}
-
-.btn-green {
-    background-color:#16a34a;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
-.btn-red {
-    background-color:#dc2626;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,14 +30,12 @@ section[data-testid="stSidebar"] input {background:white !important; color:black
 # SIDEBAR
 # ==============================
 st.sidebar.title("📊 REDI Universal Data System")
-st.sidebar.caption("Field Data Quality Monitoring System")
-
 FORM_UID = st.sidebar.text_input("Form UID")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-FAST_THRESHOLD = st.sidebar.slider("Fast Submission Threshold (seconds)", 10, 300, 60)
+FAST_THRESHOLD = st.sidebar.slider("Fast Submission Threshold (sec)", 10, 300, 60)
 ANOMALY_CONTAMINATION = st.sidebar.slider("Anomaly Sensitivity", 0.01, 0.20, 0.05)
 
 if st.sidebar.button("🔄 Refresh"):
@@ -83,20 +64,19 @@ def fetch_data(uid, token):
             all_data.extend(data.get("results", []))
             url = data.get("next")
         except Exception as e:
-            st.error(f"Data fetch failed: {e}")
+            st.error(f"Fetch failed: {e}")
             break
 
     return pd.json_normalize(all_data)
 
-with st.spinner("Fetching data..."):
-    df = fetch_data(FORM_UID, KOBO_TOKEN)
+df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.error("No data found or invalid Form UID")
+    st.warning("No data found")
     st.stop()
 
 # ==============================
-# SMART DETECTION
+# DETECT COLUMNS
 # ==============================
 def detect(names):
     for col in df.columns:
@@ -105,72 +85,65 @@ def detect(names):
                 return col
     return None
 
-DATE_COL = detect(["submission_time", "date", "time"])
-HH_COL = detect(["hh", "household", "id"])
-ENUM_COL = detect(["enum", "enumerator", "name", "user"])
-REGION_COL = detect(["region", "district", "area"])
+DATE_COL = detect(["submission_time", "date"])
+ENUM_COL = detect(["enum", "name"])
+HH_COL = detect(["hh", "household"])
+REGION_COL = detect(["region", "district"])
 
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-
-# ==============================
-# FILTERS
-# ==============================
-if DATE_COL:
-    c1, c2 = st.sidebar.columns(2)
-    start = c1.date_input("Start", df[DATE_COL].min())
-    end = c2.date_input("End", df[DATE_COL].max())
-
-    df = df[(df[DATE_COL] >= pd.to_datetime(start)) & (df[DATE_COL] <= pd.to_datetime(end))]
-
-search = st.sidebar.text_input("Search")
-if search:
-    df = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False).any(), axis=1)]
-
-# ==============================
-# PREP
-# ==============================
-if DATE_COL:
     df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
 # ==============================
-# ADVANCED ANOMALY DETECTION
+# ANOMALY DETECTION
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
 
-    std = df[num_cols].std().replace(0, 1)
-    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std().replace(0,1))
     z_flag = (z.max(axis=1) > 3)
 
     Q1 = df[num_cols].quantile(0.25)
     Q3 = df[num_cols].quantile(0.75)
     IQR = Q3 - Q1
-
-    iqr_flag = ((df[num_cols] < (Q1 - 1.5 * IQR)) |
-                (df[num_cols] > (Q3 + 1.5 * IQR))).any(axis=1)
+    iqr_flag = ((df[num_cols] < (Q1 - 1.5*IQR)) | (df[num_cols] > (Q3 + 1.5*IQR))).any(axis=1)
 
     try:
-        iso = IsolationForest(
-            n_estimators=100,
-            contamination=ANOMALY_CONTAMINATION,
-            random_state=42
-        )
-        iso_pred = iso.fit_predict(df[num_cols].fillna(0))
-        iso_flag = iso_pred == -1
+        iso = IsolationForest(contamination=ANOMALY_CONTAMINATION, random_state=42)
+        iso_flag = iso.fit_predict(df[num_cols].fillna(0)) == -1
     except:
         iso_flag = pd.Series([False]*len(df))
 
-    missing_flag = df[num_cols].isna().sum(axis=1) > 0
-
-    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
+    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag
 
 else:
     df["anomaly_flag"] = False
+
+# ==============================
+# ENUMERATOR FRAUD
+# ==============================
+if ENUM_COL and DATE_COL:
+    df = df.sort_values(DATE_COL)
+    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
+
+    fraud = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < FAST_THRESHOLD).mean()*100)
+    df["fraud_score"] = df[ENUM_COL].map(fraud)
+    df["fraud_flag"] = df["fraud_score"] > 50
+else:
+    df["fraud_flag"] = False
+
+# ==============================
+# HOUSEHOLD TRACKING
+# ==============================
+if HH_COL and "Month" in df.columns:
+    hh_tracking = df.groupby(HH_COL)["Month"].nunique().reset_index(name="months_recorded")
+    hh_tracking["completeness_%"] = (hh_tracking["months_recorded"]/12*100).clip(upper=100)
+else:
+    hh_tracking = pd.DataFrame()
 
 # ==============================
 # SPLIT
@@ -178,9 +151,7 @@ else:
 clean_df = df[~df["anomaly_flag"]]
 flag_df = df[df["anomaly_flag"]]
 
-total = len(df)
-valid = len(clean_df)
-bad = len(flag_df)
+total, valid, bad = len(df), len(clean_df), len(flag_df)
 score = (valid/total*100) if total else 0
 
 # ==============================
@@ -188,7 +159,7 @@ score = (valid/total*100) if total else 0
 # ==============================
 if page == "Dashboard":
 
-    st.title("📊 REDI Automated Data Quality Monitoring System")
+    st.title("📊 REDI Data Quality Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Total", total)
@@ -196,17 +167,25 @@ if page == "Dashboard":
     c3.metric("Flagged", bad)
     c4.metric("Score", f"{score:.1f}%")
 
-    st.bar_chart(pd.DataFrame({
-        "Valid": [valid],
-        "Flagged": [bad]
-    }))
+    st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
+
+    if ENUM_COL:
+        st.subheader("Enumerator Performance")
+        e = df.groupby(ENUM_COL)["anomaly_flag"].agg(["count","sum"])
+        e["score"] = (1 - e["sum"]/e["count"])*100
+        st.dataframe(e)
+
+    if not hh_tracking.empty:
+        st.subheader("Household Tracking")
+        st.dataframe(hh_tracking)
 
 # ==============================
 # EXPLORER
 # ==============================
 elif page == "Explorer":
-    st.dataframe(clean_df)
-    st.dataframe(flag_df)
+    tab1, tab2 = st.tabs(["Clean", "Flagged"])
+    tab1.dataframe(clean_df)
+    tab2.dataframe(flag_df)
 
 # ==============================
 # DOWNLOADS
@@ -220,10 +199,41 @@ elif page == "Downloads":
         output.seek(0)
         return output
 
-    st.download_button("Download Clean", to_excel(clean_df))
-    st.download_button("Download Flagged", to_excel(flag_df))
+    def full_excel():
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            clean_df.to_excel(writer, sheet_name="Clean", index=False)
+            flag_df.to_excel(writer, sheet_name="Flagged", index=False)
+        output.seek(0)
+        return output
+
+    def generate_pdf():
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+
+        content = [
+            Paragraph("REDI Data Quality Report", styles['Title']),
+            Spacer(1,12),
+            Paragraph(f"Total: {total}", styles['Normal']),
+            Paragraph(f"Valid: {valid}", styles['Normal']),
+            Paragraph(f"Flagged: {bad}", styles['Normal']),
+            Paragraph(f"Score: {score:.2f}%", styles['Normal'])
+        ]
+
+        doc.build(content)
+        buffer.seek(0)
+        return buffer
+
+    c1,c2,c3,c4 = st.columns(4)
+
+    c1.download_button("📊 Full Excel", full_excel(), "full.xlsx")
+    c2.download_button("✅ Clean Excel", to_excel(clean_df), "clean.xlsx")
+    c3.download_button("⚠️ Flagged Excel", to_excel(flag_df), "flagged.xlsx")
+    c4.download_button("📄 PDF Report", generate_pdf(), "report.pdf")
 
 # ==============================
 # FOOTER
 # ==============================
 st.caption(f"Updated {datetime.now()}")
+```
