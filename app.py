@@ -6,13 +6,17 @@ import io
 from supabase import create_client
 import plotly.express as px
 
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+import matplotlib.pyplot as plt
+
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI ADA SaaS", layout="wide")
+st.set_page_config(page_title="REDI ADA Enterprise SaaS v3", layout="wide")
 
 # ==============================
-# SUPABASE CLIENT
+# SUPABASE
 # ==============================
 supabase = create_client(
     st.secrets["SUPABASE_URL"],
@@ -20,39 +24,30 @@ supabase = create_client(
 )
 
 # ==============================
-# THEME (BLUE SAAS)
+# GREEN / GRAY / RED THEME
 # ==============================
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] {
-    background-color: #0b3d91;
+    background-color: #0b2e1f; /* dark green base */
 }
 h1,h2,h3,h4,h5,p,div {
     color:white !important;
 }
 section[data-testid="stSidebar"] {
-    background-color:#062a63 !important;
-}
-section[data-testid="stSidebar"] * {
-    color:white !important;
+    background-color:#1f1f1f !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================
-# AUTH FUNCTIONS
+# AUTH
 # ==============================
 def signup(email, password):
-    return supabase.auth.sign_up({
-        "email": email,
-        "password": password
-    })
+    return supabase.auth.sign_up({"email": email, "password": password})
 
 def login(email, password):
-    return supabase.auth.sign_in_with_password({
-        "email": email,
-        "password": password
-    })
+    return supabase.auth.sign_in_with_password({"email": email, "password": password})
 
 def logout():
     supabase.auth.sign_out()
@@ -61,9 +56,6 @@ def logout():
 def get_user():
     return supabase.auth.get_user()
 
-# ==============================
-# SESSION STATE
-# ==============================
 if "session" not in st.session_state:
     st.session_state.session = None
 
@@ -72,11 +64,10 @@ if "session" not in st.session_state:
 # ==============================
 if not st.session_state.session:
 
-    st.title("📊 REDI ADA SYSTEM")
+    st.title("🏢 REDI Enterprise SaaS v3")
 
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
-    # ================= LOGIN =================
     with tab1:
         email = st.text_input("Email", key="login_email")
         password = st.text_input("Password", type="password", key="login_pass")
@@ -88,9 +79,8 @@ if not st.session_state.session:
                 st.success("Login successful")
                 st.rerun()
             except:
-                st.error("Invalid credentials")
+                st.error("Invalid login")
 
-    # ================= SIGNUP =================
     with tab2:
         email = st.text_input("Email", key="signup_email")
         password = st.text_input("Password", type="password", key="signup_pass")
@@ -98,18 +88,18 @@ if not st.session_state.session:
         if st.button("Create Account"):
             try:
                 signup(email, password)
-                st.success("Account created. Check email to verify.")
+                st.success("Account created")
             except:
                 st.error("Signup failed")
 
     st.stop()
 
 # ==============================
-# USER SESSION
+# USER
 # ==============================
 user = get_user()
 
-st.sidebar.title("REDI SaaS")
+st.sidebar.title("Enterprise SaaS")
 st.sidebar.success(user.user.email)
 
 if st.sidebar.button("Logout"):
@@ -117,59 +107,52 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==============================
-# ROLE (ADMIN SIMPLE RULE)
-# ==============================
-is_admin = user.user.email.endswith("@admin.com")
-
-if is_admin:
-    st.sidebar.subheader("🔐 Admin Panel")
-    st.sidebar.write("Admin Access Enabled")
-
-# ==============================
-# SAMPLE DATA (REPLACE WITH YOUR KOBO DATA IF NEEDED)
+# SAMPLE DATA (replace with real dataset later)
 # ==============================
 df = pd.DataFrame({
-    "value": np.random.randint(1, 100, 50)
+    "value": np.random.randint(1, 100, 80)
 })
 
 # ==============================
-# AI LOGIC (CLEAN / FLAGGED)
+# AI SCORING SYSTEM
 # ==============================
-df["anomaly"] = df["value"] > 80
-df["score"] = 100 - (df["value"] * 0.5)
+df["score"] = 100 - (df["value"] * 0.6)
 
-clean_df = df[df["score"] >= 60]
-flagged_df = df[df["score"] < 60]
+df["status"] = "Clean"
+df.loc[df["score"] < 40, "status"] = "Flagged"
+
+clean_df = df[df["status"] == "Clean"]
+flagged_df = df[df["status"] == "Flagged"]
 
 # ==============================
-# 📊 DASHBOARD (RESTORED COLORS)
+# DASHBOARD (GREEN / GRAY / RED)
 # ==============================
 st.markdown("""
-<h1 style='text-align:center; color:white;'>
-📊 REDI ADA DASHBOARD
+<h1 style='text-align:center;color:#00ff88;'>
+🏢 REDI ENTERPRISE DASHBOARD
 </h1>
 """, unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3)
 
 col1.markdown(f"""
-<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
-<h3 style="color:white;">Total</h3>
-<h2 style="color:white;">{len(df)}</h2>
+<div style="background-color:#2ecc71;padding:20px;border-radius:10px;text-align:center;">
+<h3>Total</h3>
+<h2>{len(df)}</h2>
 </div>
 """, unsafe_allow_html=True)
 
 col2.markdown(f"""
-<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
-<h3 style="color:white;">Clean</h3>
-<h2 style="color:white;">{len(clean_df)}</h2>
+<div style="background-color:#95a5a6;padding:20px;border-radius:10px;text-align:center;">
+<h3>Clean</h3>
+<h2>{len(clean_df)}</h2>
 </div>
 """, unsafe_allow_html=True)
 
 col3.markdown(f"""
-<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
-<h3 style="color:white;">Flagged</h3>
-<h2 style="color:white;">{len(flagged_df)}</h2>
+<div style="background-color:#e74c3c;padding:20px;border-radius:10px;text-align:center;">
+<h3>Flagged</h3>
+<h2>{len(flagged_df)}</h2>
 </div>
 """, unsafe_allow_html=True)
 
@@ -181,18 +164,26 @@ chart_df = pd.DataFrame({
     "Count": [len(clean_df), len(flagged_df)]
 })
 
-fig = px.bar(chart_df, x="Category", y="Count", color="Category", text="Count")
+fig = px.bar(
+    chart_df,
+    x="Category",
+    y="Count",
+    color="Category",
+    color_discrete_map={
+        "Clean": "#2ecc71",
+        "Flagged": "#e74c3c"
+    },
+    text="Count"
+)
+
 st.plotly_chart(fig, use_container_width=True)
 
-# ==============================
-# TABLE
-# ==============================
 st.dataframe(df, use_container_width=True)
 
 # ==============================
-# 📦 EXPORT SYSTEM (ONLY CLEAN + FLAGGED)
+# EXPORT SYSTEM
 # ==============================
-st.subheader("📦 Export Data")
+st.subheader("📦 Enterprise Export System")
 
 def to_excel(data):
     output = io.BytesIO()
@@ -201,14 +192,50 @@ def to_excel(data):
     output.seek(0)
     return output
 
-st.download_button(
-    "⬇️ Clean Data (Excel)",
-    to_excel(clean_df),
-    "clean_data.xlsx"
-)
+# EXCEL DOWNLOADS
+st.download_button("⬇️ Full Dataset (Excel)", to_excel(df), "full.xlsx")
+st.download_button("⬇️ Clean Dataset (Excel)", to_excel(clean_df), "clean.xlsx")
+st.download_button("⬇️ Flagged Dataset (Excel)", to_excel(flagged_df), "flagged.xlsx")
+
+# ==============================
+# PDF REPORT (ENTERPRISE)
+# ==============================
+def generate_chart():
+    plt.figure(figsize=(5,3))
+    plt.bar(["Clean","Flagged"], [len(clean_df), len(flagged_df)], color=["#2ecc71","#e74c3c"])
+    plt.title("Enterprise Data Report")
+
+    path = "chart.png"
+    plt.savefig(path)
+    plt.close()
+    return path
+
+
+def generate_pdf():
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
+
+    styles = getSampleStyleSheet()
+    content = []
+
+    content.append(Paragraph("REDI ENTERPRISE SaaS REPORT", styles["Title"]))
+    content.append(Spacer(1, 12))
+
+    content.append(Paragraph(f"Total Records: {len(df)}", styles["Normal"]))
+    content.append(Paragraph(f"Clean Records: {len(clean_df)}", styles["Normal"]))
+    content.append(Paragraph(f"Flagged Records: {len(flagged_df)}", styles["Normal"]))
+    content.append(Spacer(1, 12))
+
+    img = generate_chart()
+    content.append(Image(img, width=300, height=180))
+
+    doc.build(content)
+    buffer.seek(0)
+    return buffer
+
 
 st.download_button(
-    "⬇️ Flagged Data (Excel)",
-    to_excel(flagged_df),
-    "flagged_data.xlsx"
+    "📄 Download PDF Report",
+    generate_pdf(),
+    "enterprise_report.pdf"
 )
