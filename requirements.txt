@@ -7,6 +7,3 @@ reportlab
 sqlalchemy
 openpyxl
 scikit-learn
-plotly
-kaleido
-supabase
