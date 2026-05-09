@@ -49,7 +49,7 @@ st.markdown("""
 .stApp {
     background: linear-gradient(
         135deg,
-        #eff6ff,
+        #f3f7ff,
         #dbeafe
     );
 }
@@ -59,7 +59,7 @@ st.markdown("""
     background-color: white;
     padding: 40px;
     border-radius: 18px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.15);
 }
 
 /* Login Inputs */
@@ -69,7 +69,7 @@ input {
 
 /* Login Button */
 button[kind="primary"] {
-    background-color: #1d4ed8 !important;
+    background-color: #1e3a8a !important;
     color: white !important;
     border-radius: 10px !important;
     border: none !important;
@@ -78,7 +78,7 @@ button[kind="primary"] {
 
 /* Sidebar */
 section[data-testid="stSidebar"] {
-    background-color:#1d4ed8 !important;
+    background-color:#1e3a8a !important;
 }
 
 /* Sidebar Text */
@@ -167,7 +167,6 @@ APP_NAME = os.getenv(
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
-FRAUD_THRESHOLD = 70
 
 # =========================================
 # LOGGING
@@ -546,53 +545,35 @@ else:
 
 # =========================================
 # ENUMERATOR PERFORMANCE
+# QUALITY MONITORING ONLY
 # =========================================
-if ENUM_COL and DATE_COL:
+if ENUM_COL:
 
-    df = df.sort_values(DATE_COL)
-
-    df["time_diff"] = (
-        df.groupby(ENUM_COL)[DATE_COL]
-        .diff()
-        .dt.total_seconds()
+    enum_quality = (
+        df.groupby(ENUM_COL)
+        .size()
+        .reset_index(name="submissions")
     )
 
-    perf = df.groupby(ENUM_COL).agg(
-        total=("time_diff", "count"),
-        fast=("time_diff", lambda x: (x < 20).sum())
-    ).reset_index()
-
-    perf["fraud_score"] = (
-        (perf["fast"] / perf["total"])
-        .fillna(0) * 100
-    ).clip(upper=100)
-
-    df = df.merge(
-        perf[[ENUM_COL, "fraud_score"]],
-        on=ENUM_COL,
-        how="left"
-    )
-
-    df["fraud_flag"] = (
-        df["fraud_score"] > FRAUD_THRESHOLD
-    )
+    df["fraud_flag"] = False
+    df["fraud_score"] = 0
 
 else:
 
     df["fraud_flag"] = False
+    df["fraud_score"] = 0
 
 # =========================================
 # FINAL FLAGS
+# ONLY DATA QUALITY ISSUES
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
-    df["fraud_flag"].astype(int) +
     df["ai_flag"].astype(int)
 )
 
 df["final_flag"] = (
-    (df["flag_score"] >= 2) |
-    (df["fraud_flag"])
+    df["flag_score"] >= 1
 )
 
 # =========================================
@@ -695,99 +676,8 @@ if page == "Dashboard":
             "Enumerator Performance"
         )
 
-        enum_perf = (
-            df.groupby(ENUM_COL)["final_flag"]
-            .agg(["count", "sum"])
-            .reset_index()
-        )
-
-        enum_perf.columns = [
-            "Enumerator",
-            "Total Records",
-            "Flagged Records"
-        ]
-
-        enum_perf["Quality Score (%)"] = (
-            (
-                1 -
-                (
-                    enum_perf["Flagged Records"] /
-                    enum_perf["Total Records"]
-                )
-            ) * 100
-        ).round(1)
-
         st.dataframe(
-            enum_perf.sort_values(
-                "Quality Score (%)",
-                ascending=False
-            ),
-            use_container_width=True
-        )
-
-    # =====================================
-    # REGIONAL PERFORMANCE
-    # =====================================
-    if REGION_COL:
-
-        st.subheader(
-            "Regional Performance"
-        )
-
-        regional_perf = (
-            df.groupby(REGION_COL)["final_flag"]
-            .agg(["count", "sum"])
-            .reset_index()
-        )
-
-        regional_perf.columns = [
-            "Region",
-            "Total Records",
-            "Flagged Records"
-        ]
-
-        regional_perf["Quality Score (%)"] = (
-            (
-                1 -
-                (
-                    regional_perf["Flagged Records"] /
-                    regional_perf["Total Records"]
-                )
-            ) * 100
-        ).round(1)
-
-        st.dataframe(
-            regional_perf.sort_values(
-                "Quality Score (%)",
-                ascending=False
-            ),
-            use_container_width=True
-        )
-
-    # =====================================
-    # MONTHLY TREND
-    # =====================================
-    if "Month" in df.columns:
-
-        st.subheader(
-            "Monthly Submission Trend"
-        )
-
-        monthly = (
-            df.groupby("Month")
-            .size()
-            .reset_index(name="records")
-        )
-
-        fig2 = px.line(
-            monthly,
-            x="Month",
-            y="records",
-            markers=True
-        )
-
-        st.plotly_chart(
-            fig2,
+            enum_quality,
             use_container_width=True
         )
 
@@ -829,13 +719,11 @@ elif page == "Quality Analytics":
     summary = pd.DataFrame({
         "Issue": [
             "Basic Anomalies",
-            "AI Flags",
-            "Fraud Flags"
+            "AI Flags"
         ],
         "Count": [
             df["anomaly_flag"].sum(),
-            df["ai_flag"].sum(),
-            df["fraud_flag"].sum()
+            df["ai_flag"].sum()
         ]
     })
 
