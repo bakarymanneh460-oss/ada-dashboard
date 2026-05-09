@@ -11,10 +11,56 @@ from sklearn.ensemble import IsolationForest
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI System", layout="wide")
+st.set_page_config(page_title="REDI Data Quality System", layout="wide")
 
 # ==============================
-# SIDEBAR (ALWAYS FIRST)
+# STYLE (RESTORED COLORS)
+# ==============================
+st.markdown("""
+<style>
+
+section[data-testid="stSidebar"] {
+    background-color:#1e3a8a !important;
+}
+section[data-testid="stSidebar"] * {
+    color:white !important;
+}
+section[data-testid="stSidebar"] input {
+    background:white !important;
+    color:black !important;
+}
+
+.kpi-card {
+    padding:20px;
+    border-radius:12px;
+    color:white;
+    text-align:center;
+    font-weight:bold;
+}
+
+.btn-green {
+    background-color:#16a34a;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+}
+
+.btn-red {
+    background-color:#dc2626;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================
+# SIDEBAR (ALWAYS VISIBLE)
 # ==============================
 st.sidebar.title("📊 REDI System")
 
@@ -22,7 +68,7 @@ FORM_UID = st.sidebar.text_input("Form UID")
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 # ==============================
-# SESSION STATE
+# SESSION STATE (LOGIN)
 # ==============================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -45,7 +91,7 @@ def logout():
     st.session_state.username = None
 
 # ==============================
-# LOGIN UI (BLOCK ACCESS IF NOT LOGGED IN)
+# LOGIN SCREEN
 # ==============================
 if not st.session_state.logged_in:
 
@@ -73,7 +119,7 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==============================
-# NAVIGATION
+# NAVIGATION (ROLE BASED)
 # ==============================
 pages = ["Dashboard", "Explorer", "Downloads"]
 
@@ -149,7 +195,7 @@ if len(num_cols) > 0:
     df["anomaly_flag"] = z.max(axis=1) > 3
 
 # ==============================
-# TEXT CHECK
+# TEXT FLAG
 # ==============================
 df["text_flag"] = False
 for col in df.select_dtypes(include=["object"]).columns:
@@ -157,7 +203,7 @@ for col in df.select_dtypes(include=["object"]).columns:
     df["text_flag"] |= s.isin(["", "na", "n/a", "test", "none"])
 
 # ==============================
-# FRAUD CHECK (FAST SUBMISSIONS)
+# FRAUD FLAG
 # ==============================
 df["fraud_flag"] = False
 
@@ -167,7 +213,7 @@ if ENUM_COL and DATE_COL:
     df["fraud_flag"] = df[ENUM_COL].isin(fast_users[fast_users].index)
 
 # ==============================
-# QUALITY SCORE
+# QUALITY SCORE (UNIFIED)
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 40
@@ -183,13 +229,26 @@ clean_df = df[df["quality_score"] >= 50]
 # ==============================
 if page == "Dashboard":
 
-    st.title("📊 REDI Dashboard")
+    st.title("📊 REDI Data Quality Dashboard")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", len(df))
-    c2.metric("Valid", len(clean_df))
-    c3.metric("Flagged", len(flag_df))
-    c4.metric("Avg Score", f"{df['quality_score'].mean():.1f}")
+
+    c1.markdown(
+        f'<div class="kpi-card" style="background:#2563eb">Total<br><h1>{len(df)}</h1></div>',
+        unsafe_allow_html=True
+    )
+    c2.markdown(
+        f'<div class="kpi-card" style="background:#16a34a">Valid<br><h1>{len(clean_df)}</h1></div>',
+        unsafe_allow_html=True
+    )
+    c3.markdown(
+        f'<div class="kpi-card" style="background:#dc2626">Flagged<br><h1>{len(flag_df)}</h1></div>',
+        unsafe_allow_html=True
+    )
+    c4.markdown(
+        f'<div class="kpi-card" style="background:#7c3aed">Score<br><h1>{df["quality_score"].mean():.1f}</h1></div>',
+        unsafe_allow_html=True
+    )
 
 # ==============================
 # EXPLORER
@@ -217,37 +276,48 @@ elif page == "Downloads":
         styles = getSampleStyleSheet()
 
         content = [
-            Paragraph("REDI Report", styles['Title']),
+            Paragraph("REDI Data Quality Report", styles['Title']),
+            Spacer(1, 12),
             Paragraph(f"Total: {len(df)}", styles['Normal']),
             Paragraph(f"Valid: {len(clean_df)}", styles['Normal']),
             Paragraph(f"Flagged: {len(flag_df)}", styles['Normal']),
+            Paragraph(f"Score: {df['quality_score'].mean():.2f}", styles['Normal']),
         ]
 
         doc.build(content)
         buffer.seek(0)
         return buffer
 
-    st.download_button("Full Excel", to_excel(df))
-    st.download_button("Clean Excel", to_excel(clean_df))
-    st.download_button("Flagged Excel", to_excel(flag_df))
-    st.download_button("PDF Report", pdf())
+    st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
+    st.download_button("", to_excel(df), "full.xlsx")
+
+    st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
+    st.download_button("", to_excel(clean_df), "clean.xlsx")
+
+    st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>', unsafe_allow_html=True)
+    st.download_button("", to_excel(flag_df), "flagged.xlsx")
+
+    st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
+    st.download_button("", pdf(), "report.pdf")
 
 # ==============================
-# ADMIN PANEL (ONLY ADMIN)
+# ADMIN PANEL (ONLY FOR ADMIN)
 # ==============================
 elif page == "Admin":
 
     st.title("🔐 Admin Panel")
 
-    st.subheader("Raw Data")
-    st.dataframe(df)
+    st.subheader("System Diagnostics")
+    st.write(df.describe(include="all"))
 
     st.subheader("Flag Summary")
     st.write({
-        "Anomalies": int(df["anomaly_flag"].sum()),
-        "Text Issues": int(df["text_flag"].sum()),
-        "Fraud Flags": int(df["fraud_flag"].sum())
+        "Anomaly": int(df["anomaly_flag"].sum()),
+        "Text": int(df["text_flag"].sum()),
+        "Fraud": int(df["fraud_flag"].sum())
     })
+
+    st.dataframe(df)
 
 # ==============================
 # FOOTER
