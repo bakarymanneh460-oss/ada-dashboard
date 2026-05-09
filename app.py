@@ -22,31 +22,9 @@ section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
 
-.kpi-card {
-    padding:20px;
-    border-radius:12px;
-    color:white;
-    text-align:center;
-    font-weight:bold;
-}
-
-.btn-green {
-    background-color:#16a34a;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
-
-.btn-red {
-    background-color:#dc2626;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
+.kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;font-weight:bold;}
+.btn-green {background-color:#16a34a;color:white;padding:12px;border-radius:10px;text-align:center;font-weight:bold;}
+.btn-red {background-color:#dc2626;color:white;padding:12px;border-radius:10px;text-align:center;font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,19 +90,27 @@ def detect(names):
     return None
 
 DATE_COL = detect(["submission_time", "date"])
-ENUM_COL = detect(["enum", "name"])
-HH_COL = detect(["hh", "household"])
-REGION_COL = detect(["region", "district"])
+ENUM_COL = detect(["enum", "name", "user"])
+HH_COL = detect(["hh", "household", "id"])
 
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
 # ==============================
-# ANOMALY DETECTION + EXPLANATION
+# FRAUD DETECTION (SPEED)
+# ==============================
+if ENUM_COL and DATE_COL:
+    df = df.sort_values(DATE_COL)
+    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
+    df["fraud_flag"] = df["time_diff"] < FAST_THRESHOLD
+else:
+    df["fraud_flag"] = False
+
+# ==============================
+# NUMERIC ANOMALY DETECTION
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
@@ -146,26 +132,74 @@ if len(num_cols) > 0:
 
     missing_flag = df[num_cols].isna().sum(axis=1) > 0
 
-    explanations = []
-    for i in range(len(df)):
-        r = []
-        if z_flag.iloc[i]: r.append("Extreme value (Z-score)")
-        if iqr_flag.iloc[i]: r.append("Outlier (IQR)")
-        if iso_flag[i]: r.append("Pattern anomaly (ML)")
-        if missing_flag.iloc[i]: r.append("Missing data")
-        explanations.append(", ".join(r) if r else "Clean")
-
-    df["flag_reason"] = explanations
     df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
 else:
     df["anomaly_flag"] = False
-    df["flag_reason"] = "No numeric data"
+
+# ==============================
+# QUALITATIVE CHECKS
+# ==============================
+text_cols = df.select_dtypes(include=["object"]).columns
+df["text_flag"] = False
+
+for col in text_cols:
+    col_series = df[col].astype(str).str.lower()
+    empty_flag = col_series.isin(["", "na", "n/a", "none", "null", "ok", "test"])
+    short_flag = col_series.str.len() < 3
+    repetition_flag = col_series.map(col_series.value_counts(normalize=True)) > 0.5
+
+    combined = empty_flag | short_flag | repetition_flag
+    df.loc[combined, "text_flag"] = True
+
+# ==============================
+# HOUSEHOLD TREND (simple)
+# ==============================
+if HH_COL and len(num_cols) > 0:
+    df["household_trend_flag"] = False
+    for hh, g in df.groupby(HH_COL):
+        for col in num_cols:
+            if len(g[col].dropna()) > 1 and (g[col].pct_change().abs() > 2).any():
+                df.loc[df[HH_COL] == hh, "household_trend_flag"] = True
+else:
+    df["household_trend_flag"] = False
+
+# ==============================
+# FLAG REASONS
+# ==============================
+reasons = []
+for i in range(len(df)):
+    r = []
+    if df["anomaly_flag"].iloc[i]: r.append("Numeric anomaly")
+    if df["text_flag"].iloc[i]: r.append("Text issue")
+    if df["fraud_flag"].iloc[i]: r.append("Fast submission")
+    if df["household_trend_flag"].iloc[i]: r.append("Household inconsistency")
+    reasons.append(", ".join(r) if r else "Clean")
+
+df["flag_reason"] = reasons
+
+# ==============================
+# UNIFIED QUALITY SCORE
+# ==============================
+df["quality_score"] = 100
+df.loc[df["anomaly_flag"], "quality_score"] -= 40
+df.loc[df["text_flag"], "quality_score"] -= 20
+df.loc[df["fraud_flag"], "quality_score"] -= 20
+df.loc[df["household_trend_flag"], "quality_score"] -= 20
+df["quality_score"] = df["quality_score"].clip(0, 100)
+
+def categorize(x):
+    if x >= 90: return "Excellent"
+    elif x >= 75: return "Good"
+    elif x >= 50: return "Fair"
+    else: return "Poor"
+
+df["quality_category"] = df["quality_score"].apply(categorize)
 
 # ==============================
 # SPLIT
 # ==============================
-clean_df = df[~df["anomaly_flag"]]
-flag_df = df[df["anomaly_flag"]]
+clean_df = df[df["quality_score"] >= 75]
+flag_df = df[df["quality_score"] < 75]
 
 total, valid, bad = len(df), len(clean_df), len(flag_df)
 score = (valid/total*100) if total else 0
@@ -174,17 +208,15 @@ score = (valid/total*100) if total else 0
 # DASHBOARD
 # ==============================
 if page == "Dashboard":
-
     st.title("📊 REDI Data Quality Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
+    c1.markdown(f'<div class="kpi-card" style="background:#2563eb">Total<br><h1>{total}</h1></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi-card" style="background:#16a34a">Valid<br><h1>{valid}</h1></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi-card" style="background:#dc2626">Flagged<br><h1>{bad}</h1></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed">Score<br><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
-    c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
-
-    st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
+    st.bar_chart(df["quality_category"].value_counts())
 
 # ==============================
 # EXPLORER
@@ -195,8 +227,11 @@ elif page == "Explorer":
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
 
-    st.subheader("🔍 Flag Explanation Summary")
-    st.dataframe(flag_df["flag_reason"].value_counts().reset_index())
+    st.subheader("🔍 Detailed Flag Analysis")
+    st.dataframe(flag_df[["quality_score","quality_category","flag_reason"]])
+
+    st.subheader("🔎 Rows containing '383'")
+    st.write(flag_df[flag_df.astype(str).apply(lambda x: x.str.contains("383")).any(axis=1)])
 
 # ==============================
 # DOWNLOADS
@@ -213,15 +248,8 @@ elif page == "Downloads":
     def full_excel():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            clean_df.to_excel(writer, index=False, sheet_name="Clean")
-            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
-
-            summary = pd.DataFrame({
-                "Metric": ["Total", "Valid", "Flagged", "Score"],
-                "Value": [total, valid, bad, score]
-            })
-            summary.to_excel(writer, sheet_name="Summary", index=False)
-
+            clean_df.to_excel(writer, sheet_name="Clean", index=False)
+            flag_df.to_excel(writer, sheet_name="Flagged", index=False)
         output.seek(0)
         return output
 
@@ -231,23 +259,23 @@ elif page == "Downloads":
         styles = getSampleStyleSheet()
 
         content = [
-            Paragraph("REDI Data Quality Summary Report", styles['Title']),
+            Paragraph("REDI Data Quality Report", styles['Title']),
             Spacer(1, 12),
-            Paragraph(f"Total Records: {total}", styles['Normal']),
-            Paragraph(f"Valid Records: {valid}", styles['Normal']),
-            Paragraph(f"Flagged Records: {bad}", styles['Normal']),
-            Paragraph(f"Quality Score: {score:.2f}%", styles['Normal']),
+            Paragraph(f"Total: {total}", styles['Normal']),
+            Paragraph(f"Valid: {valid}", styles['Normal']),
+            Paragraph(f"Flagged: {bad}", styles['Normal']),
+            Paragraph(f"Score: {score:.2f}%", styles['Normal']),
         ]
 
         doc.build(content)
         buffer.seek(0)
         return buffer
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1,col2,col3,col4 = st.columns(4)
 
     with col1:
         st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
-        st.download_button("", full_excel(), "redi_full.xlsx")
+        st.download_button("", full_excel(), "full.xlsx")
 
     with col2:
         st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
