@@ -12,7 +12,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sklearn.ensemble import IsolationForest
 
 # ==============================
-# REAL-TIME REFRESH (60s)
+# AUTO REFRESH (60s)
 # ==============================
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -23,7 +23,7 @@ except:
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI Data Quality System", layout="wide")
+st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 ANOMALY_CONTAMINATION = 0.05
 FAST_THRESHOLD = 60
@@ -48,26 +48,13 @@ section[data-testid="stSidebar"] * {color:white !important;}
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIDEBAR - MULTI UID MANAGER
+# SIDEBAR (FINAL SIMPLE VERSION)
 # ==============================
-st.sidebar.title("📂 Dataset Manager")
+st.sidebar.title("📂 REDI ADA System")
 
-if "uid_list" not in st.session_state:
-    st.session_state.uid_list = []
-
-new_uid = st.sidebar.text_input("Add KoBo Form UID")
-
-if st.sidebar.button("➕ Add Dataset"):
-    if new_uid and new_uid not in st.session_state.uid_list:
-        st.session_state.uid_list.append(new_uid)
-
-st.sidebar.markdown("### 📌 Saved Datasets")
-for uid in st.session_state.uid_list:
-    st.sidebar.write("•", uid)
-
-FORM_UID = st.sidebar.selectbox(
-    "🔄 Active Dataset",
-    st.session_state.uid_list if st.session_state.uid_list else [None]
+FORM_UID = st.sidebar.text_input(
+    "KoBo Form UID",
+    value="aSkM3DhA9dZDRR3pDgpHwj"
 )
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
@@ -104,7 +91,7 @@ def fetch_data(uid, token):
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data found for selected dataset")
+    st.warning("No data found for this UID")
     st.stop()
 
 # ==============================
@@ -152,7 +139,7 @@ else:
 def thresholds(df):
     t = {}
 
-    if len(num_cols):
+    if len(num_cols) > 0:
         z = np.abs((df[num_cols] - df[num_cols].mean()) /
                    df[num_cols].std().replace(0, 1))
         t["z"] = max(2.5, min(z.stack().quantile(0.95), 4))
@@ -170,7 +157,7 @@ def thresholds(df):
 thr = thresholds(df)
 
 # ==============================
-# FRAUD
+# FRAUD DETECTION
 # ==============================
 if ENUM_COL:
     fr = df.groupby(ENUM_COL)["time_diff"].apply(
@@ -182,7 +169,7 @@ else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY
+# NUMERIC ANOMALY DETECTION
 # ==============================
 if len(num_cols) > 0 and len(df) > 10:
 
@@ -205,7 +192,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# QUALITATIVE DATA DETECTION
+# QUALITATIVE DATA CHECK
 # ==============================
 df["text_flag"] = False
 
@@ -232,7 +219,7 @@ for col in text_cols:
             df["cat_flag"] = True
 
 # ==============================
-# HOUSEHOLD CHECK
+# HOUSEHOLD TREND
 # ==============================
 df["household_trend_flag"] = False
 
@@ -243,7 +230,7 @@ if HH_COL and len(num_cols) > 0:
                 df.loc[df[HH_COL] == h, "household_trend_flag"] = True
 
 # ==============================
-# FINAL FLAG
+# FINAL FLAGS
 # ==============================
 df["quality_issue_flag"] = (
     df["anomaly_flag"] |
@@ -254,7 +241,7 @@ df["quality_issue_flag"] = (
 )
 
 # ==============================
-# SCORE
+# QUALITY SCORE
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 35
@@ -275,7 +262,7 @@ clean_df = df[df["quality_score"] >= 50]
 flag_df = df[df["quality_score"] < 50]
 
 # ==============================
-# AI EXPLAIN
+# AI EXPLANATION
 # ==============================
 def explain(row):
     r = []
@@ -290,11 +277,11 @@ def explain(row):
 # DASHBOARD
 # ==============================
 if page == "Dashboard":
-    st.title("📊 REDI Dashboard")
+    st.title("📊 REDI ADA Dashboard")
 
     st.markdown(f"""
     <div style="background:#0f172a;padding:10px;border-radius:10px;color:white;">
-    📂 Active Dataset UID: {FORM_UID}
+    🔗 Active KoBo UID: {FORM_UID}
     </div>
     """, unsafe_allow_html=True)
 
@@ -365,14 +352,14 @@ elif page == "Downloads":
         plt.savefig(c2); plt.close(fig)
 
         narrative = f"""
-        Dataset contains {len(df)} records.
-        Clean: {len(clean_df)} | Flagged: {len(flag_df)}.
-        Average quality score: {df['quality_score'].mean():.2f}.
-        This report combines quantitative and qualitative data validation.
+        Dataset: {FORM_UID}
+        Total records: {len(df)}
+        Clean: {len(clean_df)} | Flagged: {len(flag_df)}
+        Average quality score: {df['quality_score'].mean():.2f}
         """
 
         content = [
-            Paragraph("REDI Data Quality Report", styles["Title"]),
+            Paragraph("REDI ADA Data Quality Report", styles["Title"]),
             Spacer(1, 12),
             Paragraph(narrative, styles["Normal"]),
             Spacer(1, 12),
@@ -404,4 +391,4 @@ elif page == "Downloads":
 # ==============================
 # FOOTER
 # ==============================
-st.caption(f"REDI System • Updated {datetime.now()}")
+st.caption(f"REDI ADA System • Updated {datetime.now()}")
