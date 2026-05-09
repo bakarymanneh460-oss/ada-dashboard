@@ -569,7 +569,8 @@ df["flag_score"] = (
 )
 
 df["final_flag"] = (
-    df["flag_score"] >= 2
+    (df["flag_score"] >= 2) |
+    (df["fraud_flag"])
 )
 
 # =========================================
@@ -600,10 +601,49 @@ if page == "Dashboard":
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric("Total Records", total)
-    c2.metric("Valid Records", valid)
-    c3.metric("Flagged Records", bad)
-    c4.metric("Quality Score", f"{score:.1f}%")
+    c1.markdown(
+        f"""
+        <div class="kpi-card"
+        style="background:#2563eb">
+        <h3>Total Records</h3>
+        <h1>{total}</h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    c2.markdown(
+        f"""
+        <div class="kpi-card"
+        style="background:#16a34a">
+        <h3>Valid Records</h3>
+        <h1>{valid}</h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    c3.markdown(
+        f"""
+        <div class="kpi-card"
+        style="background:#dc2626">
+        <h3>Flagged Records</h3>
+        <h1>{bad}</h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    c4.markdown(
+        f"""
+        <div class="kpi-card"
+        style="background:#7c3aed">
+        <h3>Quality Score</h3>
+        <h1>{score:.1f}%</h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.subheader("Data Quality Overview")
 
