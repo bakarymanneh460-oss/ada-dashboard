@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import io
@@ -343,4 +342,3 @@ elif page=="Downloads":
 # ==============================
 st.markdown("---")
 st.caption(f"REDI System • Automated Data Quality Monitoring • Version 1.0 | Updated {datetime.now()}")
-```
