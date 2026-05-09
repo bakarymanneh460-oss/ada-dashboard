@@ -1,24 +1,26 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 import io
-import hashlib
-import sqlite3
-import random
-from datetime import datetime
 
+from supabase import create_client
 import plotly.express as px
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 
 # ==============================
 # CONFIG
 # ==============================
-st.set_page_config(page_title="REDI ADA System", layout="wide")
+st.set_page_config(page_title="REDI ADA SaaS", layout="wide")
 
 # ==============================
-# UI THEME (BLUE SAAS)
+# SUPABASE CLIENT
+# ==============================
+supabase = create_client(
+    st.secrets["SUPABASE_URL"],
+    st.secrets["SUPABASE_KEY"]
+)
+
+# ==============================
+# THEME (BLUE SAAS)
 # ==============================
 st.markdown("""
 <style>
@@ -38,214 +40,175 @@ section[data-testid="stSidebar"] * {
 """, unsafe_allow_html=True)
 
 # ==============================
-# SENDGRID CONFIG (USE SECRETS IN DEPLOYMENT)
+# AUTH FUNCTIONS
 # ==============================
-SENDGRID_API_KEY = st.secrets["SENDGRID_API_KEY"]
-EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
+def signup(email, password):
+    return supabase.auth.sign_up({
+        "email": email,
+        "password": password
+    })
 
-def send_otp(email, otp):
-    message = Mail(
-        from_email=EMAIL_SENDER,
-        to_emails=email,
-        subject="REDI ADA Verification OTP",
-        html_content=f"<h2>Your OTP is: {otp}</h2>"
-    )
-    try:
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        sg.send(message)
-        return True
-    except Exception as e:
-        st.error(f"Email error: {e}")
-        return False
+def login(email, password):
+    return supabase.auth.sign_in_with_password({
+        "email": email,
+        "password": password
+    })
 
-# ==============================
-# DATABASE
-# ==============================
-conn = sqlite3.connect("redi_users.db", check_same_thread=False)
-cursor = conn.cursor()
+def logout():
+    supabase.auth.sign_out()
+    st.session_state.session = None
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password TEXT,
-    role TEXT,
-    email TEXT
-)
-""")
-
-conn.commit()
+def get_user():
+    return supabase.auth.get_user()
 
 # ==============================
 # SESSION STATE
 # ==============================
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-    st.session_state.user = None
-    st.session_state.role = None
-
-if "otp" not in st.session_state:
-    st.session_state.otp = None
-
-if "pending" not in st.session_state:
-    st.session_state.pending = None
-
-# ==============================
-# SECURITY
-# ==============================
-def hash_pw(p):
-    return hashlib.sha256(p.encode()).hexdigest()
-
-def create_user(u,p,email,role="viewer"):
-    try:
-        cursor.execute("INSERT INTO users VALUES (?,?,?,?)",
-                       (u, hash_pw(p), role, email))
-        conn.commit()
-        return True
-    except:
-        return False
-
-def auth(u,p):
-    cursor.execute("SELECT password,role FROM users WHERE username=?", (u,))
-    r = cursor.fetchone()
-    if r and r[0] == hash_pw(p):
-        return r[1]
-    return None
-
-def login(u,p):
-    role = auth(u,p)
-    if role:
-        st.session_state.auth = True
-        st.session_state.user = u
-        st.session_state.role = role
-        return True
-    return False
-
-def logout():
-    st.session_state.auth = False
-
-# ==============================
-# PASSWORD STRENGTH
-# ==============================
-def strength(p):
-    return sum([
-        len(p)>=8,
-        any(c.isupper() for c in p),
-        any(c.islower() for c in p),
-        any(c.isdigit() for c in p),
-        any(not c.isalnum() for c in p)
-    ])
+if "session" not in st.session_state:
+    st.session_state.session = None
 
 # ==============================
 # AUTH UI
 # ==============================
-if not st.session_state.auth:
+if not st.session_state.session:
 
-    st.title("📊 REDI ADA System")
+    st.title("📊 REDI ADA SYSTEM")
 
-    tab1, tab2, tab3 = st.tabs(["Login","Sign Up","Forgot Password"])
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
     # ================= LOGIN =================
     with tab1:
-        u = st.text_input("Username", key="login_user")
-        p = st.text_input("Password", type="password", key="login_pass")
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_pass")
 
         if st.button("Login"):
-            if login(u,p):
-                st.success("Welcome")
+            try:
+                res = login(email, password)
+                st.session_state.session = res.session
+                st.success("Login successful")
                 st.rerun()
-            else:
+            except:
                 st.error("Invalid credentials")
 
     # ================= SIGNUP =================
     with tab2:
-        u = st.text_input("Username", key="signup_user")
         email = st.text_input("Email", key="signup_email")
-        p = st.text_input("Password", type="password", key="signup_pass")
-
-        st.write("Strength:", "⭐"*strength(p))
-
-        if st.button("Send OTP"):
-            otp = str(random.randint(100000,999999))
-            st.session_state.otp = otp
-            st.session_state.pending = (u,p,email)
-
-            if send_otp(email, otp):
-                st.success("OTP sent to email")
-            else:
-                st.error("Failed to send OTP")
-
-        otp_in = st.text_input("Enter OTP", key="signup_otp")
+        password = st.text_input("Password", type="password", key="signup_pass")
 
         if st.button("Create Account"):
-            if otp_in == st.session_state.otp:
-                u,p,email = st.session_state.pending
-                create_user(u,p,email)
-                st.success("Account created")
-            else:
-                st.error("Invalid OTP")
-
-    # ================= FORGOT PASSWORD =================
-    with tab3:
-        email = st.text_input("Email", key="forgot_email")
-        u = st.text_input("Username", key="forgot_user")
-
-        if st.button("Send Reset OTP"):
-            otp = str(random.randint(100000,999999))
-            st.session_state.otp = otp
-            st.session_state.pending = (u,email)
-
-            send_otp(email, otp)
-            st.success("OTP sent")
-
-        otp_in = st.text_input("OTP", key="reset_otp")
-        new_pass = st.text_input("New Password", type="password", key="new_pass")
-
-        if st.button("Reset Password"):
-            if otp_in == st.session_state.otp:
-                u,email = st.session_state.pending
-                cursor.execute("UPDATE users SET password=? WHERE username=?",
-                               (hash_pw(new_pass), u))
-                conn.commit()
-                st.success("Password updated")
-            else:
-                st.error("Invalid OTP")
+            try:
+                signup(email, password)
+                st.success("Account created. Check email to verify.")
+            except:
+                st.error("Signup failed")
 
     st.stop()
 
 # ==============================
-# SIDEBAR
+# USER SESSION
 # ==============================
-st.sidebar.title("REDI System")
-st.sidebar.success(st.session_state.user)
+user = get_user()
+
+st.sidebar.title("REDI SaaS")
+st.sidebar.success(user.user.email)
 
 if st.sidebar.button("Logout"):
     logout()
     st.rerun()
 
 # ==============================
-# DATA (PLACEHOLDER SAFE)
+# ROLE (ADMIN SIMPLE RULE)
 # ==============================
-st.title("📊 Dashboard")
+is_admin = user.user.email.endswith("@admin.com")
 
+if is_admin:
+    st.sidebar.subheader("🔐 Admin Panel")
+    st.sidebar.write("Admin Access Enabled")
+
+# ==============================
+# SAMPLE DATA (REPLACE WITH YOUR KOBO DATA IF NEEDED)
+# ==============================
 df = pd.DataFrame({
-    "Category": ["Clean","Flagged"],
-    "Count": [80, 20]
+    "value": np.random.randint(1, 100, 50)
 })
 
-fig = px.bar(df, x="Category", y="Count", color="Category")
-st.plotly_chart(fig)
+# ==============================
+# AI LOGIC (CLEAN / FLAGGED)
+# ==============================
+df["anomaly"] = df["value"] > 80
+df["score"] = 100 - (df["value"] * 0.5)
 
-st.dataframe(df)
+clean_df = df[df["score"] >= 60]
+flagged_df = df[df["score"] < 60]
 
 # ==============================
-# EXPORTS
+# 📊 DASHBOARD (RESTORED COLORS)
 # ==============================
-st.subheader("Exports")
+st.markdown("""
+<h1 style='text-align:center; color:white;'>
+📊 REDI ADA DASHBOARD
+</h1>
+""", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns(3)
+
+col1.markdown(f"""
+<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
+<h3 style="color:white;">Total</h3>
+<h2 style="color:white;">{len(df)}</h2>
+</div>
+""", unsafe_allow_html=True)
+
+col2.markdown(f"""
+<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
+<h3 style="color:white;">Clean</h3>
+<h2 style="color:white;">{len(clean_df)}</h2>
+</div>
+""", unsafe_allow_html=True)
+
+col3.markdown(f"""
+<div style="background-color:#1f4e9e;padding:20px;border-radius:10px;text-align:center;">
+<h3 style="color:white;">Flagged</h3>
+<h2 style="color:white;">{len(flagged_df)}</h2>
+</div>
+""", unsafe_allow_html=True)
+
+# ==============================
+# CHART
+# ==============================
+chart_df = pd.DataFrame({
+    "Category": ["Clean", "Flagged"],
+    "Count": [len(clean_df), len(flagged_df)]
+})
+
+fig = px.bar(chart_df, x="Category", y="Count", color="Category", text="Count")
+st.plotly_chart(fig, use_container_width=True)
+
+# ==============================
+# TABLE
+# ==============================
+st.dataframe(df, use_container_width=True)
+
+# ==============================
+# 📦 EXPORT SYSTEM (ONLY CLEAN + FLAGGED)
+# ==============================
+st.subheader("📦 Export Data")
 
 def to_excel(data):
-    out = io.BytesIO()
-    pd.DataFrame(data).to_excel(out, index=False)
-    out.seek(0)
-    return out
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        data.to_excel(writer, index=False)
+    output.seek(0)
+    return output
 
-st.download_button("Download Data", to_excel(df), "data.xlsx")
+st.download_button(
+    "⬇️ Clean Data (Excel)",
+    to_excel(clean_df),
+    "clean_data.xlsx"
+)
+
+st.download_button(
+    "⬇️ Flagged Data (Excel)",
+    to_excel(flagged_df),
+    "flagged_data.xlsx"
+)
