@@ -22,7 +22,6 @@ st.markdown("""
 section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
-.kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -30,6 +29,7 @@ section[data-testid="stSidebar"] input {background:white !important; color:black
 # SIDEBAR
 # ==============================
 st.sidebar.title("📊 REDI Universal Data System")
+
 FORM_UID = st.sidebar.text_input("Form UID")
 page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
 
@@ -98,13 +98,14 @@ if DATE_COL:
     df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
 # ==============================
-# ANOMALY DETECTION
+# ANOMALY DETECTION + EXPLANATION
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
 
-    z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std().replace(0,1))
+    std = df[num_cols].std().replace(0,1)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
     z_flag = (z.max(axis=1) > 3)
 
     Q1 = df[num_cols].quantile(0.25)
@@ -118,10 +119,23 @@ if len(num_cols) > 0:
     except:
         iso_flag = pd.Series([False]*len(df))
 
-    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag
+    missing_flag = df[num_cols].isna().sum(axis=1) > 0
+
+    explanations = []
+    for i in range(len(df)):
+        r = []
+        if z_flag.iloc[i]: r.append("Extreme value (Z-score)")
+        if iqr_flag.iloc[i]: r.append("Outlier (IQR)")
+        if iso_flag[i]: r.append("Pattern anomaly (ML)")
+        if missing_flag.iloc[i]: r.append("Missing data")
+        explanations.append(", ".join(r) if r else "Clean")
+
+    df["flag_reason"] = explanations
+    df["anomaly_flag"] = z_flag | iqr_flag | iso_flag | missing_flag
 
 else:
     df["anomaly_flag"] = False
+    df["flag_reason"] = "No numeric data"
 
 # ==============================
 # ENUMERATOR FRAUD
@@ -133,6 +147,12 @@ if ENUM_COL and DATE_COL:
     fraud = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < FAST_THRESHOLD).mean()*100)
     df["fraud_score"] = df[ENUM_COL].map(fraud)
     df["fraud_flag"] = df["fraud_score"] > 50
+
+    df["flag_reason"] = df.apply(
+        lambda x: x["flag_reason"] + ", Fast submission (fraud)"
+        if x["fraud_flag"] else x["flag_reason"],
+        axis=1
+    )
 else:
     df["fraud_flag"] = False
 
@@ -183,9 +203,17 @@ if page == "Dashboard":
 # EXPLORER
 # ==============================
 elif page == "Explorer":
+
     tab1, tab2 = st.tabs(["Clean", "Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
+
+    st.subheader("🔍 Flag Explanation Summary")
+    st.dataframe(
+        flag_df["flag_reason"].value_counts().reset_index().rename(
+            columns={"index": "Reason", "flag_reason": "Count"}
+        )
+    )
 
 # ==============================
 # DOWNLOADS
