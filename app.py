@@ -18,7 +18,6 @@ st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", l
 # ==============================
 ANOMALY_CONTAMINATION = 0.05
 FAST_THRESHOLD = 60
-ADMIN_PASSWORD = "redi_admin_2026"
 
 # ==============================
 # STYLE
@@ -44,13 +43,7 @@ st.sidebar.caption("Field Data Quality Monitoring System")
 FORM_UID = st.sidebar.text_input("Form UID")
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-admin_input = st.sidebar.text_input("Admin Access", type="password")
-admin_mode = admin_input == ADMIN_PASSWORD
-
 pages = ["Dashboard", "Explorer", "Downloads"]
-if admin_mode:
-    pages.append("Admin")
-
 page = st.sidebar.radio("Navigation", pages)
 
 if st.sidebar.button("🔄 Refresh"):
@@ -355,37 +348,6 @@ elif page == "Downloads":
 
     with c4:
         st.download_button("📄 PDF Report", pdf(), "report.pdf")
-
-# ==============================
-# ADMIN
-# ==============================
-elif page == "Admin":
-
-    st.title("🔐 Admin Debug Panel")
-
-    st.subheader("⚙️ Adaptive Thresholds")
-    st.write(adaptive)
-
-    st.subheader("📊 Flag Breakdown")
-    st.write({
-        "Numeric anomalies": int(df["anomaly_flag"].sum()),
-        "Text issues": int(df["text_flag"].sum()),
-        "Fraud flags": int(df["fraud_flag"].sum()),
-        "Household issues": int(df["household_trend_flag"].sum())
-    })
-
-    if ENUM_COL:
-        st.subheader("🚨 Enumerator Fraud Ratios")
-        fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(
-            lambda x: (x < adaptive["fast"]).mean()
-        )
-        st.dataframe(fraud_ratio.sort_values(ascending=False))
-
-    st.subheader("🧪 Flagged Data")
-    st.dataframe(flag_df)
-
-    st.subheader("🧾 Full Dataset")
-    st.dataframe(df)
 
 # ==============================
 # FOOTER
