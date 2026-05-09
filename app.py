@@ -9,8 +9,8 @@ import random
 from datetime import datetime
 
 import plotly.express as px
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # ==============================
 # CONFIG
@@ -18,7 +18,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# UI THEME (BLUE)
+# UI THEME (BLUE SAAS)
 # ==============================
 st.markdown("""
 <style>
@@ -38,6 +38,27 @@ section[data-testid="stSidebar"] * {
 """, unsafe_allow_html=True)
 
 # ==============================
+# SENDGRID CONFIG (USE SECRETS IN DEPLOYMENT)
+# ==============================
+SENDGRID_API_KEY = st.secrets["SENDGRID_API_KEY"]
+EMAIL_SENDER = st.secrets["EMAIL_SENDER"]
+
+def send_otp(email, otp):
+    message = Mail(
+        from_email=EMAIL_SENDER,
+        to_emails=email,
+        subject="REDI ADA Verification OTP",
+        html_content=f"<h2>Your OTP is: {otp}</h2>"
+    )
+    try:
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
+        return True
+    except Exception as e:
+        st.error(f"Email error: {e}")
+        return False
+
+# ==============================
 # DATABASE
 # ==============================
 conn = sqlite3.connect("redi_users.db", check_same_thread=False)
@@ -48,7 +69,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     password TEXT,
     role TEXT,
-    form_uid TEXT
+    email TEXT
 )
 """)
 
@@ -61,7 +82,6 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
     st.session_state.user = None
     st.session_state.role = None
-    st.session_state.form_uid = None
 
 if "otp" not in st.session_state:
     st.session_state.otp = None
@@ -75,29 +95,28 @@ if "pending" not in st.session_state:
 def hash_pw(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
-def create_user(u,p,role,uid):
+def create_user(u,p,email,role="viewer"):
     try:
         cursor.execute("INSERT INTO users VALUES (?,?,?,?)",
-                       (u, hash_pw(p), role, uid))
+                       (u, hash_pw(p), role, email))
         conn.commit()
         return True
     except:
         return False
 
 def auth(u,p):
-    cursor.execute("SELECT password,role,form_uid FROM users WHERE username=?", (u,))
+    cursor.execute("SELECT password,role FROM users WHERE username=?", (u,))
     r = cursor.fetchone()
     if r and r[0] == hash_pw(p):
-        return r[1], r[2]
-    return None,None
+        return r[1]
+    return None
 
 def login(u,p):
-    role, uid = auth(u,p)
+    role = auth(u,p)
     if role:
         st.session_state.auth = True
         st.session_state.user = u
         st.session_state.role = role
-        st.session_state.form_uid = uid
         return True
     return False
 
@@ -117,13 +136,7 @@ def strength(p):
     ])
 
 # ==============================
-# SIGNUP FUNCTION
-# ==============================
-def register_user(u,p):
-    return create_user(u,p,"viewer","")
-
-# ==============================
-# AUTH SYSTEM (NO EMAIL - FIXED)
+# AUTH UI
 # ==============================
 if not st.session_state.auth:
 
@@ -136,55 +149,62 @@ if not st.session_state.auth:
         u = st.text_input("Username", key="login_user")
         p = st.text_input("Password", type="password", key="login_pass")
 
-        if st.button("Login", key="login_btn"):
+        if st.button("Login"):
             if login(u,p):
                 st.success("Welcome")
                 st.rerun()
             else:
                 st.error("Invalid credentials")
 
-    # ================= SIGNUP (IN-APP OTP) =================
+    # ================= SIGNUP =================
     with tab2:
         u = st.text_input("Username", key="signup_user")
+        email = st.text_input("Email", key="signup_email")
         p = st.text_input("Password", type="password", key="signup_pass")
 
         st.write("Strength:", "⭐"*strength(p))
 
-        if st.button("Generate OTP", key="gen_otp"):
+        if st.button("Send OTP"):
             otp = str(random.randint(100000,999999))
             st.session_state.otp = otp
-            st.session_state.pending = (u,p)
-            st.success(f"Your OTP is: {otp}")  # displayed instead of email
+            st.session_state.pending = (u,p,email)
+
+            if send_otp(email, otp):
+                st.success("OTP sent to email")
+            else:
+                st.error("Failed to send OTP")
 
         otp_in = st.text_input("Enter OTP", key="signup_otp")
 
-        if st.button("Create Account", key="create_acc"):
+        if st.button("Create Account"):
             if otp_in == st.session_state.otp:
-                u,p = st.session_state.pending
-                register_user(u,p)
+                u,p,email = st.session_state.pending
+                create_user(u,p,email)
                 st.success("Account created")
             else:
                 st.error("Invalid OTP")
 
     # ================= FORGOT PASSWORD =================
     with tab3:
+        email = st.text_input("Email", key="forgot_email")
         u = st.text_input("Username", key="forgot_user")
 
-        if st.button("Generate Reset OTP", key="reset_otp_btn"):
+        if st.button("Send Reset OTP"):
             otp = str(random.randint(100000,999999))
             st.session_state.otp = otp
-            st.session_state.pending = u
-            st.success(f"Reset OTP: {otp}")  # displayed in app
+            st.session_state.pending = (u,email)
+
+            send_otp(email, otp)
+            st.success("OTP sent")
 
         otp_in = st.text_input("OTP", key="reset_otp")
         new_pass = st.text_input("New Password", type="password", key="new_pass")
 
-        if st.button("Reset Password", key="reset_btn"):
+        if st.button("Reset Password"):
             if otp_in == st.session_state.otp:
-                cursor.execute(
-                    "UPDATE users SET password=? WHERE username=?",
-                    (hash_pw(new_pass), st.session_state.pending)
-                )
+                u,email = st.session_state.pending
+                cursor.execute("UPDATE users SET password=? WHERE username=?",
+                               (hash_pw(new_pass), u))
                 conn.commit()
                 st.success("Password updated")
             else:
@@ -203,73 +223,16 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==============================
-# DATA FETCH
+# DATA (PLACEHOLDER SAFE)
 # ==============================
-@st.cache_data(ttl=120)
-def fetch(uid):
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
-    data = []
+st.title("📊 Dashboard")
 
-    while url:
-        try:
-            r = requests.get(url)
-            j = r.json()
-            data.extend(j.get("results", []))
-            url = j.get("next")
-        except:
-            break
+df = pd.DataFrame({
+    "Category": ["Clean","Flagged"],
+    "Count": [80, 20]
+})
 
-    return pd.json_normalize(data)
-
-df = fetch(st.session_state.form_uid)
-
-if df.empty:
-    st.stop()
-
-# ==============================
-# ANALYTICS
-# ==============================
-num = df.select_dtypes(include=["number"]).columns
-
-df["anomaly"] = False
-if len(num):
-    z = np.abs((df[num]-df[num].mean())/df[num].std().replace(0,1))
-    df["anomaly"] = z.max(axis=1) > 2.5
-
-text_cols = df.select_dtypes(include=["object"]).columns
-col = text_cols[0] if len(text_cols) else None
-
-def sentiment(x):
-    x = str(x).lower()
-    if "bad" in x or "hate" in x: return "negative"
-    if "good" in x or "yes" in x: return "positive"
-    return "neutral"
-
-df["sentiment"] = df[col].apply(sentiment) if col else "neutral"
-
-# ==============================
-# SCORE SYSTEM
-# ==============================
-df["score"] = 100
-df.loc[df["anomaly"], "score"] -= 40
-df.loc[df["sentiment"]=="negative","score"] -= 10
-df["score"] = df["score"].clip(0,100)
-
-clean = df[df["score"]>=60]
-flagged = df[df["score"]<60]
-
-# ==============================
-# DASHBOARD
-# ==============================
-st.title("📊 REDI ADA System")
-
-c1,c2,c3 = st.columns(3)
-
-c1.metric("Total", len(df))
-c2.metric("Clean", len(clean))
-c3.metric("Flagged", len(flagged))
-
-fig = px.bar(x=["Clean","Flagged"], y=[len(clean),len(flagged)])
+fig = px.bar(df, x="Category", y="Count", color="Category")
 st.plotly_chart(fig)
 
 st.dataframe(df)
@@ -277,33 +240,12 @@ st.dataframe(df)
 # ==============================
 # EXPORTS
 # ==============================
-st.subheader("Outputs")
+st.subheader("Exports")
 
-def to_excel(d):
+def to_excel(data):
     out = io.BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as w:
-        d.to_excel(w,index=False)
+    pd.DataFrame(data).to_excel(out, index=False)
     out.seek(0)
     return out
 
-def pdf():
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf)
-    s = getSampleStyleSheet()
-
-    e = [
-        Paragraph("REDI ADA REPORT", s["Title"]),
-        Spacer(1,10),
-        Paragraph(f"Total {len(df)}", s["Normal"]),
-        Paragraph(f"Clean {len(clean)}", s["Normal"]),
-        Paragraph(f"Flagged {len(flagged)}", s["Normal"])
-    ]
-
-    doc.build(e)
-    buf.seek(0)
-    return buf
-
-st.download_button("Full Excel", to_excel(df), "full.xlsx")
-st.download_button("Clean Excel", to_excel(clean), "clean.xlsx")
-st.download_button("Flagged Excel", to_excel(flagged), "flagged.xlsx")
-st.download_button("PDF Report", pdf(), "report.pdf")
+st.download_button("Download Data", to_excel(df), "data.xlsx")
