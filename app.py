@@ -48,14 +48,31 @@ section[data-testid="stSidebar"] * {color:white !important;}
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIDEBAR (FINAL SIMPLE VERSION)
+# SIDEBAR (FINAL - UID FIX)
 # ==============================
 st.sidebar.title("📂 REDI ADA System")
 
-FORM_UID = st.sidebar.text_input(
-    "KoBo Form UID",
-    value="aSkM3DhA9dZDRR3pDgpHwj"
+st.sidebar.markdown(
+    """
+    <div style="
+        font-size:16px;
+        font-weight:700;
+        color:#ffffff;
+        margin-bottom:6px;
+    ">
+    🔗 KoBo Form UID
+    </div>
+    """,
+    unsafe_allow_html=True
 )
+
+FORM_UID = st.sidebar.text_input(
+    label="",
+    value="aSkM3DhA9dZDRR3pDgpHwj",
+    placeholder="Enter KoBo Form UID..."
+)
+
+st.sidebar.caption("Example: aSkM3DhA9dZDRR3pDgpHwj")
 
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
@@ -91,7 +108,7 @@ def fetch_data(uid, token):
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data found for this UID")
+    st.warning("No data found for this KoBo Form UID")
     st.stop()
 
 # ==============================
@@ -169,7 +186,7 @@ else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY DETECTION
+# NUMERIC ANOMALY
 # ==============================
 if len(num_cols) > 0 and len(df) > 10:
 
@@ -192,7 +209,7 @@ else:
     df["anomaly_flag"] = False
 
 # ==============================
-# QUALITATIVE DATA CHECK
+# QUALITATIVE CHECK
 # ==============================
 df["text_flag"] = False
 
@@ -241,7 +258,7 @@ df["quality_issue_flag"] = (
 )
 
 # ==============================
-# QUALITY SCORE
+# SCORE
 # ==============================
 df["quality_score"] = 100
 df.loc[df["anomaly_flag"], "quality_score"] -= 35
@@ -262,7 +279,7 @@ clean_df = df[df["quality_score"] >= 50]
 flag_df = df[df["quality_score"] < 50]
 
 # ==============================
-# AI EXPLANATION
+# AI EXPLAIN
 # ==============================
 def explain(row):
     r = []
@@ -352,10 +369,10 @@ elif page == "Downloads":
         plt.savefig(c2); plt.close(fig)
 
         narrative = f"""
-        Dataset: {FORM_UID}
+        Dataset UID: {FORM_UID}
         Total records: {len(df)}
         Clean: {len(clean_df)} | Flagged: {len(flag_df)}
-        Average quality score: {df['quality_score'].mean():.2f}
+        Average score: {df['quality_score'].mean():.2f}
         """
 
         content = [
