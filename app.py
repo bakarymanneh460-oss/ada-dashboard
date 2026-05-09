@@ -1,6 +1,6 @@
 # =========================================
 # REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
-# FINAL PRODUCTION VERSION
+# FINAL ENTERPRISE PRODUCTION VERSION
 # =========================================
 
 import streamlit as st
@@ -47,11 +47,7 @@ st.markdown("""
 
 /* Main App Background */
 .stApp {
-    background: linear-gradient(
-        135deg,
-        #f3f7ff,
-        #dbeafe
-    );
+    background-color: #f5f7fb;
 }
 
 /* Login Container */
@@ -544,274 +540,150 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# ADVANCED QUALITATIVE VALIDATION ENGINE
+# QUALITATIVE QUALITY ENGINE
 # =========================================
-
-df["qualitative_flag"] = False
-df["qualitative_issue"] = ""
+df["required_issue"] = False
+df["logic_issue"] = False
+df["text_issue"] = False
+df["spelling_issue"] = False
 
 # =========================================
 # REQUIRED FIELD CHECKS
 # =========================================
-required_keywords = [
-    "name",
-    "gender",
-    "age",
-    "region",
-    "district"
-]
-
 required_cols = []
 
-for col in df.columns:
+if HH_COL:
+    required_cols.append(HH_COL)
 
-    for key in required_keywords:
+if ENUM_COL:
+    required_cols.append(ENUM_COL)
 
-        if key in col.lower():
-
-            required_cols.append(col)
+if DATE_COL:
+    required_cols.append(DATE_COL)
 
 for col in required_cols:
 
-    missing_mask = (
-        df[col].isna() |
-        (df[col].astype(str).str.strip() == "")
-    )
-
     df.loc[
-        missing_mask,
-        "qualitative_flag"
+        df[col].isna() |
+        (df[col].astype(str).str.strip() == ""),
+        "required_issue"
     ] = True
 
-    df.loc[
-        missing_mask,
-        "qualitative_issue"
-    ] += f"Missing {col}; "
-
 # =========================================
-# BASIC SURVEY LOGIC RULES
+# SURVEY LOGIC ENGINE
 # =========================================
-age_col = None
-
 for col in df.columns:
 
-    if "age" in col.lower():
-        age_col = col
-        break
+    lower_col = col.lower()
 
-gender_col = None
+    if "age" in lower_col:
 
-for col in df.columns:
+        try:
 
-    if "gender" in col.lower() or "sex" in col.lower():
-        gender_col = col
-        break
+            age_vals = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            )
 
-preg_col = None
+            marital_cols = [
+                c for c in df.columns
+                if "marital" in c.lower()
+            ]
 
-for col in df.columns:
+            for mcol in marital_cols:
 
-    if "preg" in col.lower():
-        preg_col = col
-        break
+                df.loc[
+                    (age_vals < 5) &
+                    (
+                        df[mcol]
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .isin([
+                            "married",
+                            "single",
+                            "divorced"
+                        ])
+                    ),
+                    "logic_issue"
+                ] = True
 
-if gender_col and preg_col:
-
-    mask = (
-        df[gender_col]
-        .astype(str)
-        .str.lower()
-        .str.contains("male", na=False)
-    ) & (
-        df[preg_col]
-        .astype(str)
-        .str.lower()
-        .str.contains("yes", na=False)
-    )
-
-    df.loc[mask, "qualitative_flag"] = True
-
-    df.loc[
-        mask,
-        "qualitative_issue"
-    ] += "Male marked pregnant; "
-
-if age_col:
-
-    mask = (
-        (pd.to_numeric(df[age_col], errors="coerce") < 0) |
-        (pd.to_numeric(df[age_col], errors="coerce") > 120)
-    )
-
-    df.loc[mask, "qualitative_flag"] = True
-
-    df.loc[
-        mask,
-        "qualitative_issue"
-    ] += "Impossible age value; "
+        except:
+            pass
 
 # =========================================
-# SKIP LOGIC VALIDATION
-# =========================================
-marital_col = None
-
-for col in df.columns:
-
-    if "marital" in col.lower():
-        marital_col = col
-        break
-
-children_col = None
-
-for col in df.columns:
-
-    if "children" in col.lower() or "child" in col.lower():
-        children_col = col
-        break
-
-if marital_col and children_col:
-
-    mask = (
-        df[marital_col]
-        .astype(str)
-        .str.lower()
-        .str.contains("single", na=False)
-    ) & (
-        pd.to_numeric(
-            df[children_col],
-            errors="coerce"
-        ) > 5
-    )
-
-    df.loc[mask, "qualitative_flag"] = True
-
-    df.loc[
-        mask,
-        "qualitative_issue"
-    ] += "Skip logic inconsistency; "
-
-# =========================================
-# TEXT INCONSISTENCY CHECKS
+# TEXT CHECKS
 # =========================================
 text_cols = df.select_dtypes(
     include=["object"]
 ).columns
 
-invalid_patterns = [
-    "asdf",
-    "test",
-    "xxx",
-    "na",
-    "n/a",
-    "unknown"
+for col in text_cols:
+
+    text_series = (
+        df[col]
+        .astype(str)
+        .str.strip()
+    )
+
+    df.loc[
+        text_series == "",
+        "text_issue"
+    ] = True
+
+    df.loc[
+        text_series.str.contains(
+            r"(.)\1{5,}",
+            regex=True,
+            na=False
+        ),
+        "text_issue"
+    ] = True
+
+# =========================================
+# SPELLING ENGINE
+# =========================================
+common_bad_words = [
+
+    "teh",
+    "recieve",
+    "adress",
+    "langauge",
+    "educatoin",
+
+    "indonsia",
+    "masyarakt",
+    "sekolahh",
+    "pendidkan"
 ]
 
 for col in text_cols:
 
-    mask = df[col].astype(str).str.lower().isin(
-        invalid_patterns
-    )
-
-    df.loc[mask, "qualitative_flag"] = True
-
-    df.loc[
-        mask,
-        "qualitative_issue"
-    ] += f"Suspicious text in {col}; "
-
-# =========================================
-# SPELLING ERROR DETECTION
-# ENGLISH + INDONESIAN
-# =========================================
-common_errors = {
-
-    "teh": "the",
-    "recieve": "receive",
-    "adress": "address",
-
-    "tdak": "tidak",
-    "sya": "saya",
-    "rumh": "rumah",
-    "anak2": "anak-anak"
-}
-
-for col in text_cols:
-
-    lower_text = df[col].astype(str).str.lower()
-
-    for wrong, correct in common_errors.items():
-
-        mask = lower_text.str.contains(
-            wrong,
-            na=False
-        )
-
-        df.loc[mask, "qualitative_flag"] = True
-
-        df.loc[
-            mask,
-            "qualitative_issue"
-        ] += (
-            f"Possible spelling error "
-            f"({wrong}->{correct}) in {col}; "
-        )
-
-# =========================================
-# ADVANCED SURVEY LOGIC ENGINE
-# =========================================
-education_col = None
-
-for col in df.columns:
-
-    if "education" in col.lower():
-        education_col = col
-        break
-
-if education_col and age_col:
-
-    mask = (
-        df[education_col]
+    lower_text = (
+        df[col]
         .astype(str)
         .str.lower()
-        .str.contains(
-            "phd|doctorate|master",
-            na=False
-        )
-    ) & (
-        pd.to_numeric(
-            df[age_col],
-            errors="coerce"
-        ) < 15
     )
 
-    df.loc[mask, "qualitative_flag"] = True
+    for word in common_bad_words:
 
-    df.loc[
-        mask,
-        "qualitative_issue"
-    ] += (
-        "Education-age inconsistency; "
-    )
+        df.loc[
+            lower_text.str.contains(
+                word,
+                na=False
+            ),
+            "spelling_issue"
+        ] = True
 
 # =========================================
-# ENUMERATOR PERFORMANCE
-# QUALITY MONITORING ONLY
+# FINAL QUALITATIVE FLAG
 # =========================================
-if ENUM_COL:
-
-    enum_quality = (
-        df.groupby(ENUM_COL)
-        .size()
-        .reset_index(name="submissions")
-    )
-
-    df["fraud_flag"] = False
-    df["fraud_score"] = 0
-
-else:
-
-    df["fraud_flag"] = False
-    df["fraud_score"] = 0
+df["quality_issue_flag"] = (
+    df["required_issue"] |
+    df["logic_issue"] |
+    df["text_issue"] |
+    df["spelling_issue"]
+)
 
 # =========================================
 # FINAL FLAGS
@@ -819,12 +691,34 @@ else:
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
     df["ai_flag"].astype(int) +
-    df["qualitative_flag"].astype(int)
+    df["quality_issue_flag"].astype(int)
 )
 
 df["final_flag"] = (
-    df["flag_score"] >= 1
+    df["anomaly_flag"] |
+    df["ai_flag"] |
+    df["quality_issue_flag"]
 )
+
+# =========================================
+# SEVERITY
+# =========================================
+df["severity"] = "Low"
+
+df.loc[
+    df["quality_issue_flag"],
+    "severity"
+] = "Medium"
+
+df.loc[
+    df["anomaly_flag"],
+    "severity"
+] = "High"
+
+df.loc[
+    df["ai_flag"],
+    "severity"
+] = "Critical"
 
 # =========================================
 # CLEAN / FLAGGED
@@ -917,14 +811,32 @@ if page == "Dashboard":
         use_container_width=True
     )
 
+    # =====================================
+    # ENUMERATOR PERFORMANCE
+    # =====================================
     if ENUM_COL:
 
         st.subheader(
             "Enumerator Performance"
         )
 
+        enum_perf = (
+            df.groupby(ENUM_COL)["final_flag"]
+            .agg(["count", "sum"])
+            .reset_index()
+        )
+
+        enum_perf["quality_score"] = (
+            1 -
+            enum_perf["sum"] /
+            enum_perf["count"]
+        ) * 100
+
         st.dataframe(
-            enum_quality,
+            enum_perf.sort_values(
+                "quality_score",
+                ascending=False
+            ),
             use_container_width=True
         )
 
@@ -965,14 +877,14 @@ elif page == "Quality Analytics":
 
     summary = pd.DataFrame({
         "Issue": [
-            "Basic Anomalies",
-            "AI Flags",
+            "Quantitative Anomalies",
+            "AI Anomalies",
             "Qualitative Issues"
         ],
         "Count": [
             df["anomaly_flag"].sum(),
             df["ai_flag"].sum(),
-            df["qualitative_flag"].sum()
+            df["quality_issue_flag"].sum()
         ]
     })
 
