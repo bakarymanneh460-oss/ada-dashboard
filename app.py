@@ -14,6 +14,13 @@ from sklearn.ensemble import IsolationForest
 st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", layout="wide")
 
 # ==============================
+# FIXED PARAMETERS (NO SLIDERS)
+# ==============================
+ANOMALY_CONTAMINATION = 0.05
+FAST_THRESHOLD = 60
+ADMIN_PASSWORD = "redi_admin_2026"
+
+# ==============================
 # STYLE
 # ==============================
 st.markdown("""
@@ -37,18 +44,13 @@ st.sidebar.caption("Field Data Quality Monitoring System")
 FORM_UID = st.sidebar.text_input("Form UID")
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-FAST_THRESHOLD = st.sidebar.slider("Base Fast Threshold (sec)", 10, 300, 60)
-ANOMALY_CONTAMINATION = st.sidebar.slider("Anomaly Sensitivity", 0.01, 0.20, 0.05)
-
-# 🔐 ADMIN MODE
-ADMIN_PASSWORD = "redi_admin_2026"  # change this
 admin_input = st.sidebar.text_input("Admin Access", type="password")
 admin_mode = admin_input == ADMIN_PASSWORD
 
-# NAVIGATION
 pages = ["Dashboard", "Explorer", "Downloads"]
 if admin_mode:
     pages.append("Admin")
+
 page = st.sidebar.radio("Navigation", pages)
 
 if st.sidebar.button("🔄 Refresh"):
@@ -88,7 +90,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# DETECT COLUMNS
+# COLUMN DETECTION
 # ==============================
 def detect(names):
     for col in df.columns:
@@ -110,9 +112,15 @@ if "_submission_time" in df.columns:
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
+    if not df[DATE_COL].dropna().empty:
+        start_default = df[DATE_COL].min().date()
+        end_default = df[DATE_COL].max().date()
+    else:
+        start_default = end_default = datetime.today().date()
+
     c1, c2 = st.sidebar.columns(2)
-    start_date = c1.date_input("Start Date", df[DATE_COL].min().date())
-    end_date = c2.date_input("End Date", df[DATE_COL].max().date())
+    start_date = c1.date_input("Start Date", start_default)
+    end_date = c2.date_input("End Date", end_default)
 
     df = df[
         (df[DATE_COL] >= pd.to_datetime(start_date)) &
@@ -125,6 +133,14 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # ==============================
+# TIME DIFFERENCE
+# ==============================
+if ENUM_COL and DATE_COL:
+    df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
+else:
+    df["time_diff"] = np.nan
+
+# ==============================
 # ADAPTIVE THRESHOLDS
 # ==============================
 def compute_adaptive(df):
@@ -133,8 +149,7 @@ def compute_adaptive(df):
     if len(num_cols) > 0:
         std = df[num_cols].std().replace(0, 1)
         z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
-        z_thresh = z.stack().quantile(0.95)
-        thresholds["z"] = max(2.5, min(z_thresh, 4))
+        thresholds["z"] = max(2.5, min(z.stack().quantile(0.95), 4))
 
         Q1 = df[num_cols].quantile(0.25)
         Q3 = df[num_cols].quantile(0.75)
@@ -145,16 +160,14 @@ def compute_adaptive(df):
         thresholds["z"] = 3
         thresholds["iqr"] = 1.5
 
-    if DATE_COL and ENUM_COL:
-        df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
+    if ENUM_COL:
         time_vals = df["time_diff"].dropna()
-        if len(time_vals) > 0:
-            fast = time_vals.quantile(0.10)
-            thresholds["fast"] = max(20, min(fast, 120))
-        else:
-            thresholds["fast"] = 60
+        thresholds["fast"] = (
+            max(20, min(time_vals.quantile(0.10), 120))
+            if len(time_vals) > 0 else FAST_THRESHOLD
+        )
     else:
-        thresholds["fast"] = 60
+        thresholds["fast"] = FAST_THRESHOLD
 
     return thresholds
 
@@ -163,9 +176,10 @@ adaptive = compute_adaptive(df)
 # ==============================
 # FRAUD DETECTION
 # ==============================
-if ENUM_COL and DATE_COL:
-    fast_cutoff = adaptive["fast"]
-    fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < fast_cutoff).mean())
+if ENUM_COL:
+    fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(
+        lambda x: (x.fillna(9999) < adaptive["fast"]).mean()
+    )
     suspicious_enum = fraud_ratio[fraud_ratio > 0.7].index
     df["fraud_flag"] = df[ENUM_COL].isin(suspicious_enum)
 else:
@@ -187,15 +201,15 @@ if len(num_cols) > 0:
     iqr_flag = ((df[num_cols] < (Q1 - adaptive["iqr"] * IQR)) |
                 (df[num_cols] > (Q3 + adaptive["iqr"] * IQR))).any(axis=1)
 
-    try:
+    if len(df) > 10:
         iso_flag = IsolationForest(
             contamination=ANOMALY_CONTAMINATION,
             random_state=42
         ).fit_predict(df[num_cols].fillna(0)) == -1
-    except:
-        iso_flag = pd.Series([False]*len(df))
+    else:
+        iso_flag = np.array([False] * len(df))
 
-    missing_flag = df[num_cols].isna().sum(axis=1) > 0
+    missing_flag = df[num_cols].isna().any(axis=1)
 
     df["numeric_score"] = (
         z_flag.astype(int) +
@@ -219,6 +233,8 @@ for col in df.select_dtypes(include=["object"]).columns:
         (s.str.len() < 2)
     )
 
+df["text_flag"] = df["text_flag"].astype(bool)
+
 # ==============================
 # HOUSEHOLD TREND
 # ==============================
@@ -232,14 +248,17 @@ if HH_COL and len(num_cols) > 0:
 # ==============================
 # FLAG REASONS
 # ==============================
-df["flag_reason"] = (
-    df["anomaly_flag"].map({True:"Numeric anomaly",False:""}) +
-    df["text_flag"].map({True:", Text issue",False:""}) +
-    df["fraud_flag"].map({True:", Enumerator speed pattern",False:""}) +
-    df["household_trend_flag"].map({True:", Household inconsistency",False:""})
-).str.strip(", ")
-
-df["flag_reason"] = df["flag_reason"].replace("", "Clean")
+df["flag_reason"] = df.apply(
+    lambda x: ", ".join(
+        [r for r in [
+            "Numeric anomaly" if x["anomaly_flag"] else None,
+            "Text issue" if x["text_flag"] else None,
+            "Enumerator speed pattern" if x["fraud_flag"] else None,
+            "Household inconsistency" if x["household_trend_flag"] else None
+        ] if r]
+    ) or "Clean",
+    axis=1
+)
 
 # ==============================
 # QUALITY SCORE
@@ -326,34 +345,26 @@ elif page == "Downloads":
     c1,c2,c3,c4 = st.columns(4)
 
     with c1:
-        st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
-        st.download_button("", full_excel(), "full.xlsx")
+        st.download_button("📊 Full Excel", full_excel(), "full.xlsx")
 
     with c2:
-        st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
-        st.download_button("", to_excel(clean_df), "clean.xlsx")
+        st.download_button("✅ Clean Excel", to_excel(clean_df), "clean.xlsx")
 
     with c3:
-        st.markdown('<div class="btn-red">⚠️ Flagged Excel</div>', unsafe_allow_html=True)
-        st.download_button("", to_excel(flag_df), "flagged.xlsx")
+        st.download_button("⚠️ Flagged Excel", to_excel(flag_df), "flagged.xlsx")
 
     with c4:
-        st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
-        st.download_button("", pdf(), "report.pdf")
+        st.download_button("📄 PDF Report", pdf(), "report.pdf")
 
 # ==============================
-# ADMIN PANEL
+# ADMIN
 # ==============================
 elif page == "Admin":
 
     st.title("🔐 Admin Debug Panel")
 
     st.subheader("⚙️ Adaptive Thresholds")
-    st.write({
-        "Z-score threshold": round(adaptive["z"],2),
-        "IQR multiplier": round(adaptive["iqr"],2),
-        "Fast submission cutoff": round(adaptive["fast"],2)
-    })
+    st.write(adaptive)
 
     st.subheader("📊 Flag Breakdown")
     st.write({
@@ -365,13 +376,15 @@ elif page == "Admin":
 
     if ENUM_COL:
         st.subheader("🚨 Enumerator Fraud Ratios")
-        fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < adaptive["fast"]).mean())
+        fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(
+            lambda x: (x < adaptive["fast"]).mean()
+        )
         st.dataframe(fraud_ratio.sort_values(ascending=False))
 
-    st.subheader("🧪 Raw Flagged Data")
+    st.subheader("🧪 Flagged Data")
     st.dataframe(flag_df)
 
-    st.subheader("🧾 Full Dataset (Debug)")
+    st.subheader("🧾 Full Dataset")
     st.dataframe(df)
 
 # ==============================
