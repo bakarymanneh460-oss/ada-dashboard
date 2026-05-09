@@ -6,8 +6,6 @@ import io
 import hashlib
 import sqlite3
 import random
-import smtplib
-from email.mime.text import MIMEText
 from datetime import datetime
 
 import plotly.express as px
@@ -20,7 +18,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# UI THEME
+# UI THEME (BLUE)
 # ==============================
 st.markdown("""
 <style>
@@ -38,24 +36,6 @@ section[data-testid="stSidebar"] * {
 }
 </style>
 """, unsafe_allow_html=True)
-
-# ==============================
-# EMAIL CONFIG
-# ==============================
-EMAIL_SENDER = "your_email@gmail.com"
-EMAIL_PASSWORD = "your_app_password"
-
-def send_otp(email, otp):
-    msg = MIMEText(f"Your REDI OTP code is: {otp}")
-    msg["Subject"] = "REDI Verification"
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = email
-
-    server = smtplib.SMTP("smtp.gmail.com", 587)
-    server.starttls()
-    server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-    server.sendmail(EMAIL_SENDER, email, msg.as_string())
-    server.quit()
 
 # ==============================
 # DATABASE
@@ -143,7 +123,7 @@ def register_user(u,p):
     return create_user(u,p,"viewer","")
 
 # ==============================
-# AUTH UI (FIXED KEYS HERE)
+# AUTH SYSTEM (NO EMAIL - FIXED)
 # ==============================
 if not st.session_state.auth:
 
@@ -163,52 +143,50 @@ if not st.session_state.auth:
             else:
                 st.error("Invalid credentials")
 
-    # ================= SIGNUP =================
+    # ================= SIGNUP (IN-APP OTP) =================
     with tab2:
-        email = st.text_input("Email", key="signup_email")
         u = st.text_input("Username", key="signup_user")
         p = st.text_input("Password", type="password", key="signup_pass")
 
-        st.write("Password strength:", "⭐"*strength(p))
+        st.write("Strength:", "⭐"*strength(p))
 
-        if st.button("Send OTP", key="signup_send_otp"):
+        if st.button("Generate OTP", key="gen_otp"):
             otp = str(random.randint(100000,999999))
             st.session_state.otp = otp
-            st.session_state.pending = (u,p,email)
-            send_otp(email, otp)
-            st.success("OTP sent")
+            st.session_state.pending = (u,p)
+            st.success(f"Your OTP is: {otp}")  # displayed instead of email
 
         otp_in = st.text_input("Enter OTP", key="signup_otp")
 
-        if st.button("Verify", key="signup_verify"):
+        if st.button("Create Account", key="create_acc"):
             if otp_in == st.session_state.otp:
-                u,p,_ = st.session_state.pending
+                u,p = st.session_state.pending
                 register_user(u,p)
                 st.success("Account created")
             else:
-                st.error("Wrong OTP")
+                st.error("Invalid OTP")
 
-    # ================= FORGOT =================
+    # ================= FORGOT PASSWORD =================
     with tab3:
-        email = st.text_input("Email", key="forgot_email")
         u = st.text_input("Username", key="forgot_user")
 
-        if st.button("Send Reset OTP", key="reset_send"):
+        if st.button("Generate Reset OTP", key="reset_otp_btn"):
             otp = str(random.randint(100000,999999))
             st.session_state.otp = otp
             st.session_state.pending = u
-            send_otp(email, otp)
-            st.success("OTP sent")
+            st.success(f"Reset OTP: {otp}")  # displayed in app
 
         otp_in = st.text_input("OTP", key="reset_otp")
-        new_pass = st.text_input("New Password", type="password", key="reset_pass")
+        new_pass = st.text_input("New Password", type="password", key="new_pass")
 
         if st.button("Reset Password", key="reset_btn"):
             if otp_in == st.session_state.otp:
-                cursor.execute("UPDATE users SET password=? WHERE username=?",
-                               (hash_pw(new_pass), st.session_state.pending))
+                cursor.execute(
+                    "UPDATE users SET password=? WHERE username=?",
+                    (hash_pw(new_pass), st.session_state.pending)
+                )
                 conn.commit()
-                st.success("Password reset done")
+                st.success("Password updated")
             else:
                 st.error("Invalid OTP")
 
@@ -270,7 +248,7 @@ def sentiment(x):
 df["sentiment"] = df[col].apply(sentiment) if col else "neutral"
 
 # ==============================
-# SCORE
+# SCORE SYSTEM
 # ==============================
 df["score"] = 100
 df.loc[df["anomaly"], "score"] -= 40
@@ -314,7 +292,7 @@ def pdf():
     s = getSampleStyleSheet()
 
     e = [
-        Paragraph("REDI REPORT", s["Title"]),
+        Paragraph("REDI ADA REPORT", s["Title"]),
         Spacer(1,10),
         Paragraph(f"Total {len(df)}", s["Normal"]),
         Paragraph(f"Clean {len(clean)}", s["Normal"]),
