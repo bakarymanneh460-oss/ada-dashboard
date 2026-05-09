@@ -10,30 +10,40 @@ import plotly.express as px
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 
 # ==============================
 # PAGE CONFIG
 # ==============================
-st.set_page_config(page_title="REDI SaaS Platform", layout="wide")
+st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# STYLES (RESTORED ENTERPRISE UI)
+# 🔵 BLUE ENTERPRISE THEME
 # ==============================
 st.markdown("""
 <style>
 
+/* APP BACKGROUND */
+[data-testid="stAppViewContainer"] {
+    background-color: #0b3d91;
+}
+
+/* TEXT COLOR */
+h1, h2, h3, h4, h5, p, div {
+    color: white !important;
+}
+
+/* SIDEBAR */
 section[data-testid="stSidebar"] {
-    background-color:#1e3a8a !important;
+    background-color:#062a63 !important;
 }
 
 section[data-testid="stSidebar"] * {
     color:white !important;
 }
 
-section[data-testid="stSidebar"] input {
-    background:white !important;
-    color:black !important;
+/* INPUT FIELDS */
+input, textarea {
+    color: black !important;
 }
 
 /* KPI CARDS */
@@ -43,24 +53,7 @@ section[data-testid="stSidebar"] input {
     color:white;
     text-align:center;
     font-weight:bold;
-    box-shadow:0px 4px 10px rgba(0,0,0,0.15);
-}
-
-/* BUTTONS */
-.btn-green {
-    background-color:#16a34a;
-    color:white;
-    padding:10px;
-    border-radius:8px;
-    font-weight:bold;
-}
-
-.btn-red {
-    background-color:#dc2626;
-    color:white;
-    padding:10px;
-    border-radius:8px;
-    font-weight:bold;
+    box-shadow:0px 4px 10px rgba(0,0,0,0.25);
 }
 
 </style>
@@ -99,7 +92,7 @@ USERS = {
 }
 
 # ==============================
-# LOGGING SYSTEM
+# LOGGING
 # ==============================
 def log(action):
     st.session_state.logs.append(
@@ -118,7 +111,7 @@ if st.session_state.auth:
     st.session_state.last_action = datetime.now()
 
 # ==============================
-# LOGIN FUNCTION
+# LOGIN
 # ==============================
 def login(username, password):
     if username in USERS:
@@ -146,7 +139,7 @@ def logout():
 # ==============================
 if not st.session_state.auth:
 
-    st.title("📊 REDI SaaS Platform")
+    st.markdown("<h1 style='text-align:center;'>📊 REDI ADA System</h1>", unsafe_allow_html=True)
 
     with st.form("login"):
         u = st.text_input("Username")
@@ -163,9 +156,9 @@ if not st.session_state.auth:
     st.stop()
 
 # ==============================
-# SIDEBAR (POST LOGIN)
+# SIDEBAR
 # ==============================
-st.sidebar.title("📊 REDI System")
+st.sidebar.title("📊 REDI ADA System")
 
 st.sidebar.success(f"User: {st.session_state.user}")
 st.sidebar.info(f"Role: {st.session_state.role}")
@@ -175,12 +168,12 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 # ==============================
-# FORM UID (SAAS LOCKED)
+# FORM UID (LOCKED / ADMIN)
 # ==============================
 FORM_UID = st.session_state.form_uid
 
 if st.session_state.role == "admin":
-    FORM_UID = st.sidebar.text_input("Form UID (Admin)")
+    FORM_UID = st.sidebar.text_input("Form UID (Admin Control)")
 else:
     st.sidebar.code(FORM_UID or "NO ACCESS")
 
@@ -229,7 +222,7 @@ if DATE_COL in df.columns:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # ==============================
-# ANOMALY ENGINE
+# ANALYTICS ENGINE
 # ==============================
 num_cols = df.select_dtypes(include=["number"]).columns
 
@@ -279,7 +272,7 @@ flag_df = df[df["quality_score"] < 60]
 # ==============================
 # DASHBOARD
 # ==============================
-st.title("📊 REDI SaaS Dashboard")
+st.title("📊 REDI ADA System")
 
 c1, c2, c3, c4 = st.columns(4)
 
@@ -327,7 +320,7 @@ def pdf():
     styles = getSampleStyleSheet()
 
     elements = [
-        Paragraph("REDI SaaS REPORT", styles["Title"]),
+        Paragraph("REDI ADA REPORT", styles["Title"]),
         Spacer(1, 10),
         Paragraph(f"Total: {len(df)}", styles["Normal"]),
         Paragraph(f"Clean: {len(clean_df)}", styles["Normal"]),
@@ -347,7 +340,7 @@ st.download_button("Flagged Excel", to_excel(flag_df), "flagged.xlsx")
 st.download_button("PDF Report", pdf(), "report.pdf")
 
 # ==============================
-# AUDIT LOGS (ADMIN ONLY)
+# AUDIT LOGS
 # ==============================
 if st.session_state.role == "admin":
     st.subheader("🔐 Audit Logs")
