@@ -20,7 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 st.set_page_config(page_title="REDI ADA System", layout="wide")
 
 # ==============================
-# BLUE UI
+# UI THEME
 # ==============================
 st.markdown("""
 <style>
@@ -40,14 +40,14 @@ section[data-testid="stSidebar"] * {
 """, unsafe_allow_html=True)
 
 # ==============================
-# EMAIL CONFIG (SET THIS)
+# EMAIL CONFIG
 # ==============================
 EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password"
 
 def send_otp(email, otp):
     msg = MIMEText(f"Your REDI OTP code is: {otp}")
-    msg["Subject"] = "REDI ADA Verification"
+    msg["Subject"] = "REDI Verification"
     msg["From"] = EMAIL_SENDER
     msg["To"] = email
 
@@ -72,19 +72,10 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user TEXT,
-    action TEXT,
-    timestamp TEXT
-)
-""")
-
 conn.commit()
 
 # ==============================
-# SESSION
+# SESSION STATE
 # ==============================
 if "auth" not in st.session_state:
     st.session_state.auth = False
@@ -104,16 +95,6 @@ if "pending" not in st.session_state:
 def hash_pw(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
-def password_strength(p):
-    score = sum([
-        len(p) >= 8,
-        any(c.isupper() for c in p),
-        any(c.islower() for c in p),
-        any(c.isdigit() for c in p),
-        any(not c.isalnum() for c in p)
-    ])
-    return score
-
 def create_user(u,p,role,uid):
     try:
         cursor.execute("INSERT INTO users VALUES (?,?,?,?)",
@@ -122,11 +103,6 @@ def create_user(u,p,role,uid):
         return True
     except:
         return False
-
-def reset_password(u,p):
-    cursor.execute("UPDATE users SET password=? WHERE username=?",
-                   (hash_pw(p),u))
-    conn.commit()
 
 def auth(u,p):
     cursor.execute("SELECT password,role,form_uid FROM users WHERE username=?", (u,))
@@ -149,13 +125,25 @@ def logout():
     st.session_state.auth = False
 
 # ==============================
+# PASSWORD STRENGTH
+# ==============================
+def strength(p):
+    return sum([
+        len(p)>=8,
+        any(c.isupper() for c in p),
+        any(c.islower() for c in p),
+        any(c.isdigit() for c in p),
+        any(not c.isalnum() for c in p)
+    ])
+
+# ==============================
 # SIGNUP FUNCTION
 # ==============================
 def register_user(u,p):
     return create_user(u,p,"viewer","")
 
 # ==============================
-# LOGIN / SIGNUP / FORGOT PASSWORD
+# AUTH UI (FIXED KEYS HERE)
 # ==============================
 if not st.session_state.auth:
 
@@ -165,65 +153,62 @@ if not st.session_state.auth:
 
     # ================= LOGIN =================
     with tab1:
-        with st.form("login"):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
+        u = st.text_input("Username", key="login_user")
+        p = st.text_input("Password", type="password", key="login_pass")
 
-            if st.form_submit_button("Login"):
-                if login(u,p):
-                    st.success("Welcome")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
+        if st.button("Login", key="login_btn"):
+            if login(u,p):
+                st.success("Welcome")
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
 
     # ================= SIGNUP =================
     with tab2:
-        email = st.text_input("Email")
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        email = st.text_input("Email", key="signup_email")
+        u = st.text_input("Username", key="signup_user")
+        p = st.text_input("Password", type="password", key="signup_pass")
 
-        strength = password_strength(p)
-        st.write("Password strength:", "⭐"*strength)
+        st.write("Password strength:", "⭐"*strength(p))
 
-        if st.button("Send OTP"):
-            if strength < 3:
-                st.error("Weak password")
-            else:
-                otp = str(random.randint(100000,999999))
-                st.session_state.otp = otp
-                st.session_state.pending = (u,p,email)
-                send_otp(email, otp)
-                st.success("OTP sent")
+        if st.button("Send OTP", key="signup_send_otp"):
+            otp = str(random.randint(100000,999999))
+            st.session_state.otp = otp
+            st.session_state.pending = (u,p,email)
+            send_otp(email, otp)
+            st.success("OTP sent")
 
-        otp_in = st.text_input("Enter OTP")
+        otp_in = st.text_input("Enter OTP", key="signup_otp")
 
-        if st.button("Verify & Create"):
+        if st.button("Verify", key="signup_verify"):
             if otp_in == st.session_state.otp:
                 u,p,_ = st.session_state.pending
                 register_user(u,p)
                 st.success("Account created")
             else:
-                st.error("Invalid OTP")
+                st.error("Wrong OTP")
 
     # ================= FORGOT =================
     with tab3:
-        email = st.text_input("Email")
-        u = st.text_input("Username")
+        email = st.text_input("Email", key="forgot_email")
+        u = st.text_input("Username", key="forgot_user")
 
-        if st.button("Send Reset OTP"):
+        if st.button("Send Reset OTP", key="reset_send"):
             otp = str(random.randint(100000,999999))
             st.session_state.otp = otp
             st.session_state.pending = u
             send_otp(email, otp)
             st.success("OTP sent")
 
-        otp_in = st.text_input("OTP")
-        new_pass = st.text_input("New Password", type="password")
+        otp_in = st.text_input("OTP", key="reset_otp")
+        new_pass = st.text_input("New Password", type="password", key="reset_pass")
 
-        if st.button("Reset Password"):
+        if st.button("Reset Password", key="reset_btn"):
             if otp_in == st.session_state.otp:
-                reset_password(st.session_state.pending, new_pass)
-                st.success("Password reset successful")
+                cursor.execute("UPDATE users SET password=? WHERE username=?",
+                               (hash_pw(new_pass), st.session_state.pending))
+                conn.commit()
+                st.success("Password reset done")
             else:
                 st.error("Invalid OTP")
 
@@ -238,14 +223,6 @@ st.sidebar.success(st.session_state.user)
 if st.sidebar.button("Logout"):
     logout()
     st.rerun()
-
-# ==============================
-# PROFILE
-# ==============================
-if st.sidebar.button("Profile"):
-    st.subheader("👤 Profile")
-    st.write("User:", st.session_state.user)
-    st.write("Role:", st.session_state.role)
 
 # ==============================
 # DATA FETCH
@@ -272,7 +249,7 @@ if df.empty:
     st.stop()
 
 # ==============================
-# ANALYSIS
+# ANALYTICS
 # ==============================
 num = df.select_dtypes(include=["number"]).columns
 
@@ -314,8 +291,7 @@ c1.metric("Total", len(df))
 c2.metric("Clean", len(clean))
 c3.metric("Flagged", len(flagged))
 
-fig = px.bar(x=["Clean","Flagged"], y=[len(clean),len(flagged)],
-             color=["Clean","Flagged"])
+fig = px.bar(x=["Clean","Flagged"], y=[len(clean),len(flagged)])
 st.plotly_chart(fig)
 
 st.dataframe(df)
@@ -342,7 +318,7 @@ def pdf():
         Spacer(1,10),
         Paragraph(f"Total {len(df)}", s["Normal"]),
         Paragraph(f"Clean {len(clean)}", s["Normal"]),
-        Paragraph(f"Flagged {len(flagged)}", s["Normal"]),
+        Paragraph(f"Flagged {len(flagged)}", s["Normal"])
     ]
 
     doc.build(e)
