@@ -40,7 +40,7 @@ st.set_page_config(
 )
 
 # =========================================
-# LOGIN PAGE BLUE BACKGROUND
+# FULL STYLING
 # =========================================
 st.markdown("""
 <style>
@@ -84,6 +84,24 @@ section[data-testid="stSidebar"] {
 /* Sidebar Text */
 section[data-testid="stSidebar"] * {
     color:white !important;
+}
+
+/* Kobo UID Input Box */
+section[data-testid="stSidebar"] input {
+    background-color: white !important;
+    color: black !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
+    border: 2px solid #60a5fa !important;
+    border-radius: 8px !important;
+    padding: 10px !important;
+}
+
+/* Sidebar Labels */
+section[data-testid="stSidebar"] label {
+    color: white !important;
+    font-weight: bold !important;
+    font-size: 15px !important;
 }
 
 /* KPI Cards */
@@ -445,32 +463,6 @@ if DATE_COL:
         (df[DATE_COL] >= pd.to_datetime(start)) &
         (df[DATE_COL] <= pd.to_datetime(end))
     ]
-
-if REGION_COL:
-
-    regions = st.sidebar.multiselect(
-        "Region Filter",
-        df[REGION_COL].dropna().unique()
-    )
-
-    if regions:
-
-        df = df[
-            df[REGION_COL].isin(regions)
-        ]
-
-if ENUM_COL:
-
-    enums = st.sidebar.multiselect(
-        "Enumerator Filter",
-        df[ENUM_COL].dropna().unique()
-    )
-
-    if enums:
-
-        df = df[
-            df[ENUM_COL].isin(enums)
-        ]
 
 search = st.sidebar.text_input("Search")
 
