@@ -92,13 +92,11 @@ username = st.session_state.get("username")
 if authentication_status is False:
 
     st.error("Incorrect username or password")
-
     st.stop()
 
 if authentication_status is None:
 
     st.warning("Please login")
-
     st.stop()
 
 authenticator.logout(
@@ -145,7 +143,7 @@ def log_action(user, action):
 log_action(username, "logged_in")
 
 # =========================================
-# STYLE
+# GLOBAL STYLES
 # =========================================
 st.markdown("""
 <style>
@@ -169,6 +167,46 @@ section[data-testid="stSidebar"] input {
     color:white;
     text-align:center;
     box-shadow:0 4px 10px rgba(0,0,0,0.2);
+}
+
+.btn-green {
+    background-color:#16a34a;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-red {
+    background-color:#dc2626;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-blue {
+    background-color:#2563eb;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-purple {
+    background-color:#7c3aed;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
 }
 
 </style>
@@ -288,7 +326,6 @@ def fetch_data(uid, token):
         except Exception as e:
 
             logging.error(str(e))
-
             break
 
     return pd.json_normalize(all_data)
@@ -304,7 +341,6 @@ df = fetch_data(
 if df.empty:
 
     st.warning("No data found")
-
     st.stop()
 
 # =========================================
@@ -677,33 +713,155 @@ elif page == "Downloads":
 
         return output
 
-    c1, c2 = st.columns(2)
+    def full_excel():
+
+        output = io.BytesIO()
+
+        with pd.ExcelWriter(
+            output,
+            engine="openpyxl"
+        ) as writer:
+
+            clean_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Clean"
+            )
+
+            flag_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Flagged"
+            )
+
+        output.seek(0)
+
+        return output
+
+    def generate_pdf():
+
+        buffer = io.BytesIO()
+
+        doc = SimpleDocTemplate(buffer)
+
+        styles = getSampleStyleSheet()
+
+        elements = []
+
+        elements.append(
+            Paragraph(
+                "REDI Data Quality Report",
+                styles["Title"]
+            )
+        )
+
+        elements.append(
+            Spacer(1, 12)
+        )
+
+        table_data = [
+            ["Metric", "Value"],
+            ["Total Records", str(total)],
+            ["Valid Records", str(valid)],
+            ["Flagged Records", str(bad)],
+            ["Quality Score", f"{score:.2f}%"]
+        ]
+
+        table = Table(table_data)
+
+        table.setStyle(TableStyle([
+            (
+                "BACKGROUND",
+                (0,0),
+                (-1,0),
+                colors.grey
+            ),
+            (
+                "TEXTCOLOR",
+                (0,0),
+                (-1,0),
+                colors.whitesmoke
+            ),
+            (
+                "GRID",
+                (0,0),
+                (-1,-1),
+                1,
+                colors.black
+            ),
+            (
+                "FONTNAME",
+                (0,0),
+                (-1,0),
+                "Helvetica-Bold"
+            ),
+        ]))
+
+        elements.append(table)
+
+        doc.build(elements)
+
+        buffer.seek(0)
+
+        return buffer
+
+    c1, c2, c3, c4 = st.columns(4)
 
     with c1:
 
-        if st.download_button(
-            "✅ Download Clean Data",
-            to_excel(clean_df),
-            file_name="clean.xlsx"
-        ):
+        st.markdown(
+            '<div class="btn-blue">📊 Full Dataset Export</div>',
+            unsafe_allow_html=True
+        )
 
-            log_action(
-                username,
-                "downloaded_clean"
-            )
+        st.download_button(
+            "Download Full Excel",
+            full_excel(),
+            file_name="redi_full.xlsx",
+            use_container_width=True
+        )
 
     with c2:
 
-        if st.download_button(
-            "⚠️ Download Flagged Data",
-            to_excel(flag_df),
-            file_name="flagged.xlsx"
-        ):
+        st.markdown(
+            '<div class="btn-green">✅ Clean Data Export</div>',
+            unsafe_allow_html=True
+        )
 
-            log_action(
-                username,
-                "downloaded_flagged"
-            )
+        st.download_button(
+            "Download Clean Excel",
+            to_excel(clean_df),
+            file_name="clean.xlsx",
+            use_container_width=True
+        )
+
+    with c3:
+
+        st.markdown(
+            '<div class="btn-red">⚠️ Flagged Data Export</div>',
+            unsafe_allow_html=True
+        )
+
+        st.download_button(
+            "Download Flagged Excel",
+            to_excel(flag_df),
+            file_name="flagged.xlsx",
+            use_container_width=True
+        )
+
+    with c4:
+
+        st.markdown(
+            '<div class="btn-purple">📄 PDF Quality Report</div>',
+            unsafe_allow_html=True
+        )
+
+        st.download_button(
+            "Download PDF Report",
+            generate_pdf(),
+            file_name="redi_report.pdf",
+            use_container_width=True
+        )
 
 # =========================================
 # FOOTER
