@@ -35,12 +35,21 @@ st.sidebar.title("📊 REDI Universal Data System")
 st.sidebar.caption("Field Data Quality Monitoring System")
 
 FORM_UID = st.sidebar.text_input("Form UID")
-page = st.sidebar.radio("Navigation", ["Dashboard", "Explorer", "Downloads"])
-
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
 FAST_THRESHOLD = st.sidebar.slider("Base Fast Threshold (sec)", 10, 300, 60)
 ANOMALY_CONTAMINATION = st.sidebar.slider("Anomaly Sensitivity", 0.01, 0.20, 0.05)
+
+# 🔐 ADMIN MODE
+ADMIN_PASSWORD = "redi_admin_2026"  # change this
+admin_input = st.sidebar.text_input("Admin Access", type="password")
+admin_mode = admin_input == ADMIN_PASSWORD
+
+# NAVIGATION
+pages = ["Dashboard", "Explorer", "Downloads"]
+if admin_mode:
+    pages.append("Admin")
+page = st.sidebar.radio("Navigation", pages)
 
 if st.sidebar.button("🔄 Refresh"):
     st.cache_data.clear()
@@ -67,8 +76,7 @@ def fetch_data(uid, token):
             data = r.json()
             all_data.extend(data.get("results", []))
             url = data.get("next")
-        except Exception as e:
-            st.error(f"Fetch failed: {e}")
+        except:
             break
 
     return pd.json_normalize(all_data)
@@ -117,7 +125,7 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # ==============================
-# ADAPTIVE THRESHOLDS (FIXED)
+# ADAPTIVE THRESHOLDS
 # ==============================
 def compute_adaptive(df):
     thresholds = {}
@@ -125,14 +133,12 @@ def compute_adaptive(df):
     if len(num_cols) > 0:
         std = df[num_cols].std().replace(0, 1)
         z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
-
         z_thresh = z.stack().quantile(0.95)
         thresholds["z"] = max(2.5, min(z_thresh, 4))
 
         Q1 = df[num_cols].quantile(0.25)
         Q3 = df[num_cols].quantile(0.75)
         IQR = Q3 - Q1
-
         iqr_mult = 1.5 + (IQR.mean() / (df[num_cols].mean().abs().mean() + 1e-5))
         thresholds["iqr"] = max(1.5, min(iqr_mult, 3))
     else:
@@ -142,7 +148,6 @@ def compute_adaptive(df):
     if DATE_COL and ENUM_COL:
         df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
         time_vals = df["time_diff"].dropna()
-
         if len(time_vals) > 0:
             fast = time_vals.quantile(0.10)
             thresholds["fast"] = max(20, min(fast, 120))
@@ -272,28 +277,13 @@ if page == "Dashboard":
 
     st.bar_chart(df["quality_category"].value_counts())
 
-    st.subheader("⚙️ Adaptive Thresholds")
-    st.write({
-        "Z-score threshold": round(adaptive["z"],2),
-        "IQR multiplier": round(adaptive["iqr"],2),
-        "Fast submission cutoff": round(adaptive["fast"],2)
-    })
-
 # ==============================
 # EXPLORER
 # ==============================
 elif page == "Explorer":
-
     tab1,tab2 = st.tabs(["Clean","Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
-
-    st.subheader("🔎 Investigation Tool")
-    search = st.text_input("Search any value")
-
-    if search:
-        results = df[df.astype(str).apply(lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)]
-        st.dataframe(results)
 
 # ==============================
 # DOWNLOADS
@@ -350,6 +340,39 @@ elif page == "Downloads":
     with c4:
         st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
         st.download_button("", pdf(), "report.pdf")
+
+# ==============================
+# ADMIN PANEL
+# ==============================
+elif page == "Admin":
+
+    st.title("🔐 Admin Debug Panel")
+
+    st.subheader("⚙️ Adaptive Thresholds")
+    st.write({
+        "Z-score threshold": round(adaptive["z"],2),
+        "IQR multiplier": round(adaptive["iqr"],2),
+        "Fast submission cutoff": round(adaptive["fast"],2)
+    })
+
+    st.subheader("📊 Flag Breakdown")
+    st.write({
+        "Numeric anomalies": int(df["anomaly_flag"].sum()),
+        "Text issues": int(df["text_flag"].sum()),
+        "Fraud flags": int(df["fraud_flag"].sum()),
+        "Household issues": int(df["household_trend_flag"].sum())
+    })
+
+    if ENUM_COL:
+        st.subheader("🚨 Enumerator Fraud Ratios")
+        fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < adaptive["fast"]).mean())
+        st.dataframe(fraud_ratio.sort_values(ascending=False))
+
+    st.subheader("🧪 Raw Flagged Data")
+    st.dataframe(flag_df)
+
+    st.subheader("🧾 Full Dataset (Debug)")
+    st.dataframe(df)
 
 # ==============================
 # FOOTER
