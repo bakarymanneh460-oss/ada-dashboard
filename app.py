@@ -40,6 +40,106 @@ st.set_page_config(
 )
 
 # =========================================
+# LOGIN PAGE BLUE BACKGROUND
+# =========================================
+st.markdown("""
+<style>
+
+/* Main App Background */
+.stApp {
+    background: linear-gradient(
+        135deg,
+        #1e3a8a,
+        #2563eb
+    );
+}
+
+/* Login Container */
+[data-testid="stForm"] {
+    background-color: white;
+    padding: 40px;
+    border-radius: 18px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+}
+
+/* Login Inputs */
+input {
+    border-radius: 8px !important;
+}
+
+/* Login Button */
+button[kind="primary"] {
+    background-color: #1e3a8a !important;
+    color: white !important;
+    border-radius: 10px !important;
+    border: none !important;
+    font-weight: bold !important;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color:#1e3a8a !important;
+}
+
+/* Sidebar Text */
+section[data-testid="stSidebar"] * {
+    color:white !important;
+}
+
+/* KPI Cards */
+.kpi-card {
+    padding:20px;
+    border-radius:14px;
+    color:white;
+    text-align:center;
+    box-shadow:0 4px 10px rgba(0,0,0,0.2);
+}
+
+/* Download Buttons */
+.btn-green {
+    background-color:#16a34a;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-red {
+    background-color:#dc2626;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-blue {
+    background-color:#2563eb;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+.btn-purple {
+    background-color:#7c3aed;
+    color:white;
+    padding:12px;
+    border-radius:10px;
+    text-align:center;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# =========================================
 # CONFIG
 # =========================================
 APP_NAME = os.getenv(
@@ -141,76 +241,6 @@ def log_action(user, action):
     log.to_csv(file, index=False)
 
 log_action(username, "logged_in")
-
-# =========================================
-# GLOBAL STYLES
-# =========================================
-st.markdown("""
-<style>
-
-section[data-testid="stSidebar"] {
-    background-color:#1e3a8a !important;
-}
-
-section[data-testid="stSidebar"] * {
-    color:white !important;
-}
-
-section[data-testid="stSidebar"] input {
-    background:white !important;
-    color:black !important;
-}
-
-.kpi-card {
-    padding:20px;
-    border-radius:14px;
-    color:white;
-    text-align:center;
-    box-shadow:0 4px 10px rgba(0,0,0,0.2);
-}
-
-.btn-green {
-    background-color:#16a34a;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-    margin-bottom:10px;
-}
-
-.btn-red {
-    background-color:#dc2626;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-    margin-bottom:10px;
-}
-
-.btn-blue {
-    background-color:#2563eb;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-    margin-bottom:10px;
-}
-
-.btn-purple {
-    background-color:#7c3aed;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-    margin-bottom:10px;
-}
-
-</style>
-""", unsafe_allow_html=True)
 
 # =========================================
 # SIDEBAR
