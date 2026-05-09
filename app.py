@@ -8,51 +8,23 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from sklearn.ensemble import IsolationForest
 
-# ==============================
 # CONFIG
-# ==============================
 st.set_page_config(page_title="REDI Automated Data Quality Monitoring System", layout="wide")
 
-# ==============================
 # STYLE
-# ==============================
 st.markdown("""
 <style>
 section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 section[data-testid="stSidebar"] input {background:white !important; color:black !important;}
 
-.kpi-card {
-    padding:20px;
-    border-radius:12px;
-    color:white;
-    text-align:center;
-    font-weight:bold;
-}
-
-.btn-green {
-    background-color:#16a34a;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
-
-.btn-red {
-    background-color:#dc2626;
-    color:white;
-    padding:12px;
-    border-radius:10px;
-    text-align:center;
-    font-weight:bold;
-}
+.kpi-card {padding:20px;border-radius:12px;color:white;text-align:center;font-weight:bold;}
+.btn-green {background-color:#16a34a;color:white;padding:12px;border-radius:10px;text-align:center;font-weight:bold;}
+.btn-red {background-color:#dc2626;color:white;padding:12px;border-radius:10px;text-align:center;font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================
 # SIDEBAR
-# ==============================
 st.sidebar.title("📊 REDI Universal Data System")
 st.sidebar.caption("Field Data Quality Monitoring System")
 
@@ -68,9 +40,7 @@ if st.sidebar.button("🔄 Refresh"):
     st.cache_data.clear()
     st.rerun()
 
-# ==============================
 # FETCH
-# ==============================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
     if not uid:
@@ -101,9 +71,7 @@ if df.empty:
     st.warning("No data found")
     st.stop()
 
-# ==============================
 # DETECT COLUMNS
-# ==============================
 def detect(names):
     for col in df.columns:
         for n in names:
@@ -112,20 +80,13 @@ def detect(names):
     return None
 
 DATE_COL = detect(["submission_time", "date"])
-ENUM_COL = detect(["enum", "name"])
-HH_COL = detect(["hh", "household"])
-REGION_COL = detect(["region", "district"])
-
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
 
-# ==============================
-# ANOMALY DETECTION + EXPLANATION
-# ==============================
+# ANOMALY DETECTION
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
@@ -161,46 +122,39 @@ else:
     df["anomaly_flag"] = False
     df["flag_reason"] = "No numeric data"
 
-# ==============================
 # SPLIT
-# ==============================
 clean_df = df[~df["anomaly_flag"]]
 flag_df = df[df["anomaly_flag"]]
 
 total, valid, bad = len(df), len(clean_df), len(flag_df)
 score = (valid/total*100) if total else 0
 
-# ==============================
 # DASHBOARD
-# ==============================
 if page == "Dashboard":
-
     st.title("📊 REDI Data Quality Dashboard")
 
     c1,c2,c3,c4 = st.columns(4)
-
     c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
     c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
-    st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
-
-# ==============================
 # EXPLORER
-# ==============================
 elif page == "Explorer":
+    st.title("Explorer")
 
     tab1, tab2 = st.tabs(["Clean", "Flagged"])
     tab1.dataframe(clean_df)
     tab2.dataframe(flag_df)
 
     st.subheader("🔍 Flag Explanation Summary")
-    st.dataframe(flag_df["flag_reason"].value_counts().reset_index())
+    st.dataframe(flag_df["flag_reason"].value_counts())
 
-# ==============================
+    # 🔥 DEBUG FOR 383
+    st.subheader("🔎 Debug: Rows containing '383'")
+    st.write(flag_df[flag_df.astype(str).apply(lambda x: x.str.contains("383")).any(axis=1)])
+
 # DOWNLOADS
-# ==============================
 elif page == "Downloads":
 
     def to_excel(data):
@@ -213,15 +167,8 @@ elif page == "Downloads":
     def full_excel():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            clean_df.to_excel(writer, index=False, sheet_name="Clean")
-            flag_df.to_excel(writer, index=False, sheet_name="Flagged")
-
-            summary = pd.DataFrame({
-                "Metric": ["Total", "Valid", "Flagged", "Score"],
-                "Value": [total, valid, bad, score]
-            })
-            summary.to_excel(writer, sheet_name="Summary", index=False)
-
+            clean_df.to_excel(writer, sheet_name="Clean", index=False)
+            flag_df.to_excel(writer, sheet_name="Flagged", index=False)
         output.seek(0)
         return output
 
@@ -231,23 +178,23 @@ elif page == "Downloads":
         styles = getSampleStyleSheet()
 
         content = [
-            Paragraph("REDI Data Quality Summary Report", styles['Title']),
+            Paragraph("REDI Data Quality Report", styles['Title']),
             Spacer(1, 12),
-            Paragraph(f"Total Records: {total}", styles['Normal']),
-            Paragraph(f"Valid Records: {valid}", styles['Normal']),
-            Paragraph(f"Flagged Records: {bad}", styles['Normal']),
-            Paragraph(f"Quality Score: {score:.2f}%", styles['Normal']),
+            Paragraph(f"Total: {total}", styles['Normal']),
+            Paragraph(f"Valid: {valid}", styles['Normal']),
+            Paragraph(f"Flagged: {bad}", styles['Normal']),
+            Paragraph(f"Score: {score:.2f}%", styles['Normal']),
         ]
 
         doc.build(content)
         buffer.seek(0)
         return buffer
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1,col2,col3,col4 = st.columns(4)
 
     with col1:
         st.markdown('<div class="btn-green">📊 Full Excel</div>', unsafe_allow_html=True)
-        st.download_button("", full_excel(), "redi_full.xlsx")
+        st.download_button("", full_excel(), "full.xlsx")
 
     with col2:
         st.markdown('<div class="btn-green">✅ Clean Excel</div>', unsafe_allow_html=True)
@@ -261,7 +208,5 @@ elif page == "Downloads":
         st.markdown('<div class="btn-green">📄 PDF Report</div>', unsafe_allow_html=True)
         st.download_button("", generate_pdf(), "report.pdf")
 
-# ==============================
 # FOOTER
-# ==============================
 st.caption(f"Updated {datetime.now()}")
