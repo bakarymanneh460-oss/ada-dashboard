@@ -7,10 +7,10 @@ import io
 # ==============================
 # PAGE CONFIG
 # ==============================
-st.set_page_config(page_title="REDI ADA System (Recovery Mode)", layout="wide")
+st.set_page_config(page_title="REDI ADA UID System", layout="wide")
 
 # ==============================
-# THEME (BLUE UI RESTORED)
+# UI THEME (BLUE RESTORED)
 # ==============================
 st.markdown("""
 <style>
@@ -27,54 +27,30 @@ section[data-testid="stSidebar"] {
 """, unsafe_allow_html=True)
 
 # ==============================
-# SIMPLE LOGIN (LOCAL - TEMPORARY)
+# UID FORM INPUT
 # ==============================
-USERS = {
-    "admin": "admin123",
-    "user": "user123"
-}
+st.title("📊 REDI ADA UID FORM SYSTEM")
 
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-    st.session_state.user = None
+uid = st.text_input("Enter Form UID")
 
-if not st.session_state.auth:
-
-    st.title("🔐 REDI ADA Login")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        if username in USERS and USERS[username] == password:
-            st.session_state.auth = True
-            st.session_state.user = username
-            st.success("Login successful")
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
+if not uid:
+    st.warning("Please enter a Form UID to continue")
     st.stop()
 
-# ==============================
-# USER HEADER
-# ==============================
-st.sidebar.title("REDI System")
-st.sidebar.success(f"User: {st.session_state.user}")
-
-if st.sidebar.button("Logout"):
-    st.session_state.auth = False
-    st.rerun()
+st.success(f"Loaded Form UID: {uid}")
 
 # ==============================
-# SAMPLE DATA (RESTORED SYSTEM)
+# SIMULATED DATA PER UID
+# (replace later with real Kobo API if needed)
 # ==============================
+np.random.seed(abs(hash(uid)) % 10000)
+
 df = pd.DataFrame({
     "value": np.random.randint(1, 100, 80)
 })
 
 # ==============================
-# CLEAN / FLAGGED LOGIC
+# ANALYTICS ENGINE
 # ==============================
 df["score"] = 100 - (df["value"] * 0.6)
 df["status"] = np.where(df["score"] < 40, "Flagged", "Clean")
@@ -85,11 +61,15 @@ flagged_df = df[df["status"] == "Flagged"]
 # ==============================
 # DASHBOARD
 # ==============================
-st.title("📊 REDI ADA DASHBOARD")
+st.markdown(f"""
+<h1 style='text-align:center;color:#00ff88;'>
+📊 UID DASHBOARD: {uid}
+</h1>
+""", unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total", len(df))
+col1.metric("Total Records", len(df))
 col2.metric("Clean", len(clean_df))
 col3.metric("Flagged", len(flagged_df))
 
@@ -115,9 +95,9 @@ st.plotly_chart(fig, use_container_width=True)
 st.dataframe(df, use_container_width=True)
 
 # ==============================
-# EXPORT SYSTEM (WORKING)
+# EXPORT SYSTEM (UID-BASED)
 # ==============================
-st.subheader("📦 Export Data")
+st.subheader("📦 Export UID Data")
 
 def to_excel(data):
     output = io.BytesIO()
@@ -126,5 +106,20 @@ def to_excel(data):
     output.seek(0)
     return output
 
-st.download_button("⬇️ Clean Data", to_excel(clean_df), "clean.xlsx")
-st.download_button("⬇️ Flagged Data", to_excel(flagged_df), "flagged.xlsx")
+st.download_button(
+    "⬇️ Full UID Dataset",
+    to_excel(df),
+    f"{uid}_full.xlsx"
+)
+
+st.download_button(
+    "⬇️ Clean Data",
+    to_excel(clean_df),
+    f"{uid}_clean.xlsx"
+)
+
+st.download_button(
+    "⬇️ Flagged Data",
+    to_excel(flagged_df),
+    f"{uid}_flagged.xlsx"
+)
