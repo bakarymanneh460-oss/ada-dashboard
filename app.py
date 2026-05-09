@@ -117,7 +117,7 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # ==============================
-# ADAPTIVE THRESHOLDS
+# ADAPTIVE THRESHOLDS (FIXED)
 # ==============================
 def compute_adaptive(df):
     thresholds = {}
@@ -125,43 +125,49 @@ def compute_adaptive(df):
     if len(num_cols) > 0:
         std = df[num_cols].std().replace(0, 1)
         z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
-        thresholds["z"] = z.stack().quantile(0.95)
+
+        z_thresh = z.stack().quantile(0.95)
+        thresholds["z"] = max(2.5, min(z_thresh, 4))
 
         Q1 = df[num_cols].quantile(0.25)
         Q3 = df[num_cols].quantile(0.75)
         IQR = Q3 - Q1
-        thresholds["iqr"] = 1.5 + (IQR.mean() / (df[num_cols].mean().abs().mean() + 1e-5))
 
+        iqr_mult = 1.5 + (IQR.mean() / (df[num_cols].mean().abs().mean() + 1e-5))
+        thresholds["iqr"] = max(1.5, min(iqr_mult, 3))
     else:
         thresholds["z"] = 3
         thresholds["iqr"] = 1.5
 
     if DATE_COL and ENUM_COL:
         df["time_diff"] = df.groupby(ENUM_COL)[DATE_COL].diff().dt.total_seconds()
-        if df["time_diff"].dropna().empty:
-            thresholds["fast"] = FAST_THRESHOLD
+        time_vals = df["time_diff"].dropna()
+
+        if len(time_vals) > 0:
+            fast = time_vals.quantile(0.10)
+            thresholds["fast"] = max(20, min(fast, 120))
         else:
-            thresholds["fast"] = df["time_diff"].quantile(0.10)
+            thresholds["fast"] = 60
     else:
-        thresholds["fast"] = FAST_THRESHOLD
+        thresholds["fast"] = 60
 
     return thresholds
 
 adaptive = compute_adaptive(df)
 
 # ==============================
-# FRAUD DETECTION (ADAPTIVE)
+# FRAUD DETECTION
 # ==============================
 if ENUM_COL and DATE_COL:
     fast_cutoff = adaptive["fast"]
     fraud_ratio = df.groupby(ENUM_COL)["time_diff"].apply(lambda x: (x < fast_cutoff).mean())
-    suspicious_enum = fraud_ratio[fraud_ratio > 0.6].index
+    suspicious_enum = fraud_ratio[fraud_ratio > 0.7].index
     df["fraud_flag"] = df[ENUM_COL].isin(suspicious_enum)
 else:
     df["fraud_flag"] = False
 
 # ==============================
-# NUMERIC ANOMALY (ADAPTIVE)
+# NUMERIC ANOMALY
 # ==============================
 if len(num_cols) > 0:
 
