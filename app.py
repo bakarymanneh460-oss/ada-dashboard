@@ -1,23 +1,22 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import requests
 import plotly.express as px
-import io
 
 # ==============================
-# PAGE CONFIG
+# CONFIG
 # ==============================
-st.set_page_config(page_title="REDI ADA UID System", layout="wide")
+st.set_page_config(page_title="REDI Enterprise UID SaaS", layout="wide")
 
 # ==============================
-# UI THEME (BLUE RESTORED)
+# THEME (BLUE)
 # ==============================
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] {
     background-color: #0b3d91;
 }
-h1,h2,h3,h4,h5,p,div {
+h1,h2,h3,h4,p,div {
     color:white !important;
 }
 section[data-testid="stSidebar"] {
@@ -27,33 +26,121 @@ section[data-testid="stSidebar"] {
 """, unsafe_allow_html=True)
 
 # ==============================
-# UID FORM INPUT
+# USERS (MULTI-USER SYSTEM)
 # ==============================
-st.title("📊 REDI ADA UID FORM SYSTEM")
+USERS = {
+    "admin": {
+        "password": "admin123",
+        "role": "admin",
+        "uids": ["ALL"]
+    },
+    "user1": {
+        "password": "user123",
+        "role": "user",
+        "uids": ["aQJmYa6Z9mJ5qwdw8RrQcj"]
+    },
+    "user2": {
+        "password": "user456",
+        "role": "user",
+        "uids": ["demoUID123"]
+    }
+}
 
-uid = st.text_input("Enter Form UID")
+# ==============================
+# SESSION
+# ==============================
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+    st.session_state.user = None
 
-if not uid:
-    st.warning("Please enter a Form UID to continue")
+# ==============================
+# LOGIN
+# ==============================
+if not st.session_state.auth:
+
+    st.title("🔐 REDI Enterprise Login")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        if username in USERS and USERS[username]["password"] == password:
+            st.session_state.auth = True
+            st.session_state.user = username
+            st.rerun()
+        else:
+            st.error("Invalid credentials")
+
     st.stop()
 
-st.success(f"Loaded Form UID: {uid}")
+# ==============================
+# USER INFO
+# ==============================
+user = USERS[st.session_state.user]
+
+st.sidebar.title("Enterprise Panel")
+st.sidebar.success(st.session_state.user)
+
+if st.sidebar.button("Logout"):
+    st.session_state.auth = False
+    st.rerun()
 
 # ==============================
-# SIMULATED DATA PER UID
-# (replace later with real Kobo API if needed)
+# ADMIN DASHBOARD
 # ==============================
-np.random.seed(abs(hash(uid)) % 10000)
-
-df = pd.DataFrame({
-    "value": np.random.randint(1, 100, 80)
-})
+if user["role"] == "admin":
+    st.sidebar.subheader("🔐 Admin Dashboard")
+    st.write("Users in system:")
+    st.dataframe(pd.DataFrame(USERS).T)
 
 # ==============================
-# ANALYTICS ENGINE
+# UID ACCESS CONTROL
 # ==============================
-df["score"] = 100 - (df["value"] * 0.6)
-df["status"] = np.where(df["score"] < 40, "Flagged", "Clean")
+st.title("📊 UID Data Dashboard")
+
+if user["uids"][0] == "ALL":
+    uid = st.text_input("Enter ANY UID (Admin Access)")
+else:
+    uid = st.selectbox("Select Your UID", user["uids"])
+
+# ==============================
+# FETCH KOBO DATA
+# ==============================
+def fetch_kobo(uid):
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return pd.DataFrame()
+    data = r.json().get("results", [])
+    return pd.json_normalize(data)
+
+df = fetch_kobo(uid)
+
+if df.empty:
+    st.warning("No data found for this UID")
+    st.stop()
+
+# ==============================
+# AI EXPLANATION ENGINE
+# ==============================
+def explain(row):
+    reasons = []
+    if "value" in row and row["value"] > 80:
+        reasons.append("High value detected")
+    if len(reasons) == 0:
+        return "Normal record"
+    return " | ".join(reasons)
+
+# ==============================
+# ANALYTICS
+# ==============================
+if "value" in df.columns:
+    df["score"] = 100 - df["value"]
+else:
+    df["score"] = df.select_dtypes(include='number').mean(axis=1)
+
+df["status"] = df["score"].apply(lambda x: "Flagged" if x < 40 else "Clean")
+df["AI_Explanation"] = df.apply(explain, axis=1)
 
 clean_df = df[df["status"] == "Clean"]
 flagged_df = df[df["status"] == "Flagged"]
@@ -61,25 +148,21 @@ flagged_df = df[df["status"] == "Flagged"]
 # ==============================
 # DASHBOARD
 # ==============================
-st.markdown(f"""
-<h1 style='text-align:center;color:#00ff88;'>
-📊 UID DASHBOARD: {uid}
-</h1>
-""", unsafe_allow_html=True)
+st.markdown(f"## 📊 UID: {uid}")
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Total Records", len(df))
+col1.metric("Total", len(df))
 col2.metric("Clean", len(clean_df))
 col3.metric("Flagged", len(flagged_df))
 
-chart_df = pd.DataFrame({
+chart = pd.DataFrame({
     "Category": ["Clean", "Flagged"],
     "Count": [len(clean_df), len(flagged_df)]
 })
 
 fig = px.bar(
-    chart_df,
+    chart,
     x="Category",
     y="Count",
     color="Category",
@@ -92,34 +175,23 @@ fig = px.bar(
 
 st.plotly_chart(fig, use_container_width=True)
 
-st.dataframe(df, use_container_width=True)
+# ==============================
+# DATA VIEW
+# ==============================
+st.dataframe(df)
 
 # ==============================
-# EXPORT SYSTEM (UID-BASED)
+# AI EXPLANATION VIEW
 # ==============================
-st.subheader("📦 Export UID Data")
+st.subheader("🧠 AI Explanation (Why Flagged)")
 
-def to_excel(data):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        data.to_excel(writer, index=False)
-    output.seek(0)
-    return output
+st.dataframe(df[["status", "AI_Explanation"]])
 
-st.download_button(
-    "⬇️ Full UID Dataset",
-    to_excel(df),
-    f"{uid}_full.xlsx"
-)
+# ==============================
+# EXPORTS
+# ==============================
+st.subheader("📦 Exports")
 
-st.download_button(
-    "⬇️ Clean Data",
-    to_excel(clean_df),
-    f"{uid}_clean.xlsx"
-)
-
-st.download_button(
-    "⬇️ Flagged Data",
-    to_excel(flagged_df),
-    f"{uid}_flagged.xlsx"
-)
+st.download_button("Full Data", df.to_csv(index=False), "full.csv")
+st.download_button("Clean Data", clean_df.to_csv(index=False), "clean.csv")
+st.download_button("Flagged Data", flagged_df.to_csv(index=False), "flagged.csv")
