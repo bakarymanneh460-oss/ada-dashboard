@@ -1,5 +1,5 @@
 # =========================================
-# REDI ADA SYSTEM — TRUE FINAL VERSION
+# REDI ADA SYSTEM — TRUE FINAL STABLE VERSION
 # =========================================
 
 import streamlit as st
@@ -38,15 +38,9 @@ st.markdown("""
 <style>
 .stApp {background: linear-gradient(135deg,#f3f7ff,#dbeafe);}
 
-section[data-testid="stSidebar"] {
-    background-color:#1e3a8a !important;
-}
+section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
+section[data-testid="stSidebar"] * {color:white !important;}
 
-section[data-testid="stSidebar"] * {
-    color:white !important;
-}
-
-/* FIX INPUT VISIBILITY */
 section[data-testid="stSidebar"] input {
     background:white !important;
     color:black !important;
@@ -54,7 +48,6 @@ section[data-testid="stSidebar"] input {
     border-radius:8px !important;
 }
 
-/* FIX DATE INPUT */
 section[data-testid="stSidebar"] .stDateInput input {
     color:black !important;
 }
@@ -243,15 +236,16 @@ for col in df.select_dtypes(include="object"):
     df.loc[mask,"qualitative_issue"] += f"Bad text {col}; "
 
 # =========================================
-# FINAL FLAG LOGIC (FIXED)
+# FINAL FLAG LOGIC (BALANCED)
 # =========================================
 df["final_flag"] = (
     df["qualitative_flag"] |
-    (df["anomaly_flag"] & df["ai_flag"])
+    df["anomaly_flag"] |
+    df["ai_flag"]
 )
 
 # =========================================
-# WHY FLAGGED ENGINE
+# WHY FLAGGED
 # =========================================
 def explain_row(r):
     reasons = []
@@ -264,9 +258,6 @@ def explain_row(r):
 
     if r["ai_flag"]:
         reasons.append("AI anomaly detected")
-
-    if r["anomaly_flag"] and r["ai_flag"]:
-        reasons.append("Strong anomaly (AI + statistical)")
 
     if not reasons:
         return "No issues"
@@ -315,18 +306,15 @@ elif page=="Explorer":
 
     with t2:
         st.subheader("⚠️ Flagged Records (with Reasons)")
-
         cols = list(flag.columns)
         if "why_flagged" in cols:
             cols.insert(0, cols.pop(cols.index("why_flagged")))
-
         st.dataframe(flag[cols], use_container_width=True)
 
 # =========================================
-# QUALITY ANALYTICS (RENAMED)
+# QUALITY ANALYTICS
 # =========================================
 elif page=="Quality Analytics":
-
     summary = pd.DataFrame({
         "Category": ["Quantitative","Qualitative"],
         "Count": [
@@ -334,35 +322,77 @@ elif page=="Quality Analytics":
             int(df["qualitative_flag"].sum())
         ]
     })
-
     st.dataframe(summary)
-
     st.plotly_chart(px.pie(summary,names="Category",values="Count"))
 
 # =========================================
-# DOWNLOADS
+# DOWNLOADS (FULL RESTORED)
 # =========================================
 elif page=="Downloads":
 
     st.title("Downloads & Reports")
 
-    def to_excel(d):
-        o=io.BytesIO()
-        with pd.ExcelWriter(o,engine="openpyxl") as w:
-            d.to_excel(w,index=False)
-        o.seek(0)
-        return o
+    def to_excel(data):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            data.to_excel(writer, index=False)
+        output.seek(0)
+        return output
 
-    c1,c2,c3 = st.columns(3)
+    def full_excel():
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            clean.to_excel(writer, index=False, sheet_name="Clean")
+            flag.to_excel(writer, index=False, sheet_name="Flagged")
+        output.seek(0)
+        return output
+
+    def generate_pdf():
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+
+        elements = []
+        elements.append(Paragraph("REDI Data Quality Report", styles["Title"]))
+        elements.append(Spacer(1, 12))
+
+        table_data = [
+            ["Metric", "Value"],
+            ["Total Records", str(total)],
+            ["Valid Records", str(valid)],
+            ["Flagged Records", str(bad)],
+            ["Quality Score", f"{score:.2f}%"]
+        ]
+
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.grey),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
+            ("GRID", (0,0), (-1,-1), 1, colors.black),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+
+    c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        st.download_button("Download Clean",to_excel(clean),"clean.xlsx")
+        st.markdown('<div class="btn-blue">📊 Full Dataset Export</div>', unsafe_allow_html=True)
+        st.download_button("Download Full Excel", full_excel(), "redi_full.xlsx")
 
     with c2:
-        st.download_button("Download Flagged",to_excel(flag),"flagged.xlsx")
+        st.markdown('<div class="btn-green">✅ Clean Data Export</div>', unsafe_allow_html=True)
+        st.download_button("Download Clean Excel", to_excel(clean), "clean.xlsx")
 
     with c3:
-        st.download_button("Download Full",to_excel(df),"full.xlsx")
+        st.markdown('<div class="btn-red">⚠️ Flagged Data Export</div>', unsafe_allow_html=True)
+        st.download_button("Download Flagged Excel", to_excel(flag), "flagged.xlsx")
+
+    with c4:
+        st.markdown('<div class="btn-purple">📄 PDF Report</div>', unsafe_allow_html=True)
+        st.download_button("Download PDF Report", generate_pdf(), "redi_report.pdf")
 
 # =========================================
 # FOOTER
