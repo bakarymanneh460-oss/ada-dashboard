@@ -1,6 +1,6 @@
 # =========================================
 # REDI DATA QUALITY MONITORING SYSTEM
-# NO-FAIL EXAM / DEMO VERSION (STREAMLIT SAFE)
+# FINAL MASTER VERSION (UN / WORLD BANK STYLE + MOBILE SAFE)
 # =========================================
 
 import streamlit as st
@@ -10,7 +10,6 @@ import requests
 import os
 import logging
 import yaml
-import io
 import time
 
 import streamlit_authenticator as stauth
@@ -18,10 +17,6 @@ import streamlit_authenticator as stauth
 from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
-
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 
 import plotly.express as px
 
@@ -37,7 +32,71 @@ st.set_page_config(
 APP_NAME = "REDI Data Quality Monitoring System"
 
 # =========================================
-# SAFE LOGGING (FALLBACK ALERT SYSTEM)
+# 🎨 UN / WORLD BANK STYLE THEME
+# =========================================
+st.markdown("""
+<style>
+
+/* GLOBAL BACKGROUND */
+.stApp {
+    background: #f7fafc;
+    font-family: "Segoe UI", Roboto, sans-serif;
+}
+
+/* SIDEBAR (UN STYLE) */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0b2e4a, #123a5a);
+    color: white;
+}
+
+section[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+/* SIDEBAR INPUTS */
+section[data-testid="stSidebar"] input {
+    background-color: #ffffff !important;
+    color: #0b2e4a !important;
+    border-radius: 6px !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+/* KPI CARDS */
+.kpi-card {
+    background: white;
+    border-left: 6px solid #1d4ed8;
+    padding: 18px;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    text-align: center;
+}
+
+/* BUTTONS */
+.btn-blue {background:#1d4ed8;color:white;padding:10px;border-radius:6px;font-weight:600;}
+.btn-green {background:#16a34a;color:white;padding:10px;border-radius:6px;font-weight:600;}
+.btn-red {background:#dc2626;color:white;padding:10px;border-radius:6px;font-weight:600;}
+.btn-purple {background:#6d28d9;color:white;padding:10px;border-radius:6px;font-weight:600;}
+
+/* HEADINGS */
+h1, h2, h3 {color:#0b2e4a;}
+
+/* TABLE HEADER */
+th {
+    background-color: #0b2e4a !important;
+    color: white !important;
+}
+
+/* MOBILE */
+@media only screen and (max-width: 768px) {
+    .kpi-card {margin-bottom:10px;}
+    h1 {font-size:22px !important;}
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# =========================================
+# SAFE LOGGING (NO FAIL SYSTEM)
 # =========================================
 os.makedirs("logs", exist_ok=True)
 
@@ -47,16 +106,12 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s"
 )
 
-def alert_system(message):
-    """
-    SAFE ALERT SYSTEM (NO EXTERNAL DEPENDENCIES)
-    Replaces WhatsApp/email to avoid failure in exams/demo
-    """
-    logging.info(f"ALERT: {message}")
-    st.warning(f"🚨 SYSTEM ALERT: {message}")
+def alert_system(msg):
+    logging.info(msg)
+    st.warning(f"🚨 ALERT: {msg}")
 
 # =========================================
-# AUTHENTICATION SAFE LOAD
+# AUTH
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -71,11 +126,11 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Incorrect username or password")
+    st.error("Wrong login")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
-    st.warning("Please login")
+    st.warning("Login required")
     st.stop()
 
 name = st.session_state.get("name")
@@ -87,7 +142,18 @@ st.sidebar.success(f"Welcome {name}")
 role = config["credentials"]["usernames"][username]["role"]
 
 # =========================================
-# DATA FETCH (SAFE)
+# SIDEBAR
+# =========================================
+st.sidebar.title("📊 REDI System")
+
+FORM_UID = st.sidebar.text_input("Kobo UID")
+KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
+
+live_mode = st.sidebar.toggle("🔴 Live Mode", value=False)
+refresh_rate = st.sidebar.selectbox("Refresh (sec)", [5, 10, 30], index=1)
+
+# =========================================
+# DATA FETCH
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -98,7 +164,7 @@ def fetch_data(uid, token):
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
     headers = {"Authorization": f"Token {token}"} if token else {}
 
-    data_all = []
+    data = []
 
     try:
         while url:
@@ -109,35 +175,22 @@ def fetch_data(uid, token):
                 break
 
             js = r.json()
-            data_all.extend(js.get("results", []))
+            data.extend(js.get("results", []))
             url = js.get("next")
 
     except Exception as e:
         logging.error(str(e))
         return pd.DataFrame()
 
-    return pd.json_normalize(data_all)
-
-# =========================================
-# SIDEBAR
-# =========================================
-st.sidebar.title("📊 REDI System")
-
-FORM_UID = st.sidebar.text_input("Kobo UID")
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
-
-# LIVE MODE (SAFE SIMULATION)
-live_mode = st.sidebar.toggle("🔴 Live Mode", value=False)
-refresh_rate = st.sidebar.selectbox("Refresh (sec)", [5, 10, 30], index=1)
+    return pd.json_normalize(data)
 
 # =========================================
 # LOAD DATA
 # =========================================
-with st.spinner("Loading data..."):
-    df = fetch_data(FORM_UID, KOBO_TOKEN)
+df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data available")
+    st.warning("No data found")
     st.stop()
 
 # =========================================
@@ -151,16 +204,15 @@ def detect(keys):
     return None
 
 AGE_COL = detect(["age"])
-GENDER_COL = detect(["gender", "sex"])
 ENUM_COL = detect(["enum", "user"])
 
 # =========================================
-# QUALITY ENGINE INIT
+# QUALITY ENGINE
 # =========================================
 df["reason"] = ""
 df["flag"] = False
 
-# Missing values rule
+# Missing values
 for col in df.columns:
     if any(k in col.lower() for k in ["name", "age", "gender"]):
 
@@ -172,7 +224,6 @@ for col in df.columns:
 # Age rule
 if AGE_COL:
     age = pd.to_numeric(df[AGE_COL], errors="coerce")
-
     mask = (age < 0) | (age > 120)
 
     df.loc[mask, "flag"] = True
@@ -199,7 +250,7 @@ clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
 # =========================================
-# AI EXPLANATION (PER ROW)
+# AI EXPLANATION
 # =========================================
 def explain(row):
 
@@ -216,7 +267,7 @@ def explain(row):
 df["ai_explanation"] = df.apply(explain, axis=1)
 
 # =========================================
-# KPIs
+# KPI
 # =========================================
 total = len(df)
 valid = len(clean_df)
@@ -224,13 +275,13 @@ bad = len(flag_df)
 score = (valid / total * 100) if total else 0
 
 # =========================================
-# SAFE ALERT SYSTEM (NO FAIL MODE)
+# ALERT SYSTEM (SAFE)
 # =========================================
 if len(flag_df) > 0:
-    alert_system(f"{len(flag_df)} anomalies detected in dataset")
+    alert_system(f"{len(flag_df)} anomalies detected")
 
 # =========================================
-# LIVE MODE SIMULATION
+# LIVE MODE
 # =========================================
 if live_mode:
     time.sleep(refresh_rate)
@@ -250,16 +301,20 @@ page = st.sidebar.radio("Navigation", [
 # =========================================
 if page == "Dashboard":
 
-    st.title(APP_NAME)
+    st.markdown(f"""
+    # 🏛️ {APP_NAME}
+    ### UN / World Bank Style Data Quality Dashboard
+    """)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
+    c3, c4 = st.columns(2)
 
-    c1.metric("Total", total)
-    c2.metric("Valid", valid)
-    c3.metric("Flagged", bad)
-    c4.metric("Quality Score", f"{score:.2f}%")
+    c1.markdown(f'<div class="kpi-card"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi-card"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi-card"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi-card"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
 
-    st.subheader("Data Quality Overview")
+    st.subheader("Quality Overview")
 
     fig = px.bar(
         pd.DataFrame({"Type": ["Valid", "Flagged"], "Count": [valid, bad]}),
@@ -269,7 +324,6 @@ if page == "Dashboard":
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # ENUMERATOR LEADERBOARD
     if ENUM_COL:
 
         leaderboard = df.groupby(ENUM_COL).agg(
@@ -277,7 +331,7 @@ if page == "Dashboard":
             flagged=("final_flag", "sum")
         ).reset_index()
 
-        leaderboard["score"] = (1 - leaderboard["flagged"] / leaderboard["total"]) * 100
+        leaderboard["score"] = (1 - leaderboard["flagged"]/leaderboard["total"]) * 100
 
         st.subheader("🏆 Enumerator Leaderboard")
         st.dataframe(leaderboard.sort_values("score", ascending=False))
@@ -289,7 +343,7 @@ elif page == "Explorer":
 
     st.title("Data Explorer")
 
-    tab1, tab2 = st.tabs(["Clean Data", "Flagged Data"])
+    tab1, tab2 = st.tabs(["Clean", "Flagged"])
 
     with tab1:
         st.dataframe(clean_df, use_container_width=True)
@@ -302,11 +356,11 @@ elif page == "Explorer":
 # =========================================
 elif page == "Insights":
 
-    st.title("Key Insights")
+    st.title("Insights")
 
     st.bar_chart(flag_df["reason"].value_counts().head(10))
 
 # =========================================
 # FOOTER
 # =========================================
-st.caption(f"{APP_NAME} | Generated at {datetime.now()}")
+st.caption(f"{APP_NAME} | Generated {datetime.now()}")
