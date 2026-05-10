@@ -1,29 +1,24 @@
 credentials:
   usernames:
-
     admin:
-      email: admin@redi.org
-      name: REDI Admin
-      password: admin123
+      email: admin@redi.com
+      name: Admin User
+      password: $2b$12$KIXQexamplehashedpassword
       role: admin
 
     supervisor:
-      email: supervisor@redi.org
-      name: REDI Supervisor
-      password: supervisor123
+      email: sup@redi.com
+      name: Supervisor
+      password: $2b$12$KIXQexamplehashedpassword
       role: supervisor
 
     enumerator:
-      email: enum@redi.org
-      name: REDI Enumerator
-      password: enum123
+      email: enum@redi.com
+      name: Enumerator
+      password: $2b$12$KIXQexamplehashedpassword
       role: enumerator
 
 cookie:
-  expiry_days: 30
-  key: redi_cookie_key
+  expiry_days: 1
+  key: redi_secure_key
   name: redi_cookie
-
-preauthorized:
-  emails:
-    - admin@redi.org
