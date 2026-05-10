@@ -1,6 +1,6 @@
 # =========================================
 # REDI DATA QUALITY MONITORING SYSTEM
-# FINAL PRODUCTION READY VERSION
+# FINAL DEPLOYMENT READY APP
 # =========================================
 
 import streamlit as st
@@ -19,22 +19,6 @@ from yaml.loader import SafeLoader
 import plotly.express as px
 
 # =========================================
-# OPTIONAL DATABASE (SAFE MODE)
-# =========================================
-DB_ENABLED = False
-engine = None
-
-try:
-    from sqlalchemy import create_engine
-    DB_URL = st.secrets.get("DB_URL", None)
-    if DB_URL:
-        engine = create_engine(DB_URL, pool_pre_ping=True)
-        DB_ENABLED = True
-except:
-    DB_ENABLED = False
-
-
-# =========================================
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
@@ -43,11 +27,10 @@ st.set_page_config(
     page_icon="📊"
 )
 
-APP_NAME = "REDI Data Quality Monitoring System"
+APP_NAME = "REDI Automated Data Quality Monitoring System"
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
-
 
 # =========================================
 # LOGGING
@@ -62,7 +45,6 @@ logging.basicConfig(
 
 def log_error(e):
     logging.error(str(e))
-
 
 # =========================================
 # AUTHENTICATION
@@ -82,7 +64,7 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Invalid login")
+    st.error("Invalid username or password")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
@@ -99,7 +81,6 @@ role = config["credentials"]["usernames"][username]["role"]
 st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
-
 # =========================================
 # SIDEBAR INPUT
 # =========================================
@@ -113,9 +94,8 @@ page = st.sidebar.radio(
     ["Dashboard", "Explorer", "Analytics", "Downloads"]
 )
 
-
 # =========================================
-# DATA FETCH
+# DATA FETCH (ROBUST + SAFE)
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -123,9 +103,11 @@ def fetch_data(uid, token):
     if not uid:
         return pd.DataFrame()
 
-    headers = {"Authorization": f"Token {token}"} if token else {}
-
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
+
+    headers = {
+        "Authorization": f"Token {token}"
+    } if token else {}
 
     results = []
 
@@ -134,16 +116,17 @@ def fetch_data(uid, token):
             r = requests.get(url, headers=headers, timeout=30)
 
             if r.status_code != 200:
-                log_error(f"API error {r.status_code}")
-                break
+                st.error(f"Kobo API Error: {r.status_code}")
+                st.stop()
 
             data = r.json()
+
             results.extend(data.get("results", []))
             url = data.get("next")
 
         except Exception as e:
-            log_error(e)
-            break
+            st.error(f"Connection error: {e}")
+            st.stop()
 
     return pd.json_normalize(results)
 
@@ -151,9 +134,8 @@ def fetch_data(uid, token):
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data available")
+    st.warning("No data found for this form")
     st.stop()
-
 
 # =========================================
 # COLUMN DETECTION
@@ -170,7 +152,6 @@ DATE_COL = detect(["date", "time", "submission"])
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-
 
 # =========================================
 # FILTERS
@@ -192,7 +173,6 @@ if search:
         axis=1
     )]
 
-
 # =========================================
 # QUALITY ENGINE
 # =========================================
@@ -202,8 +182,7 @@ df["anomaly_flag"] = False
 df["ai_flag"] = False
 df["quality_flag"] = False
 
-
-# Z-score anomaly
+# Z-score anomaly detection
 if len(num_cols) > 0:
     try:
         z = np.abs(
@@ -214,7 +193,6 @@ if len(num_cols) > 0:
     except Exception as e:
         log_error(e)
 
-
 # AI anomaly detection
 if ENABLE_AI and len(num_cols) > 2:
     try:
@@ -223,15 +201,13 @@ if ENABLE_AI and len(num_cols) > 2:
     except Exception as e:
         log_error(e)
 
-
-# Missing values check
+# Missing values detection
 for col in df.columns:
     miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
     df.loc[miss, "quality_flag"] = True
 
-
 # =========================================
-# FINAL SCORING
+# FINAL FLAGS
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
@@ -244,20 +220,8 @@ df["final_flag"] = df["flag_score"] >= 1
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
-
 # =========================================
-# OPTIONAL DB SAVE (NON-BREAKING)
-# =========================================
-if DB_ENABLED:
-    try:
-        df.to_sql("processed_data", engine, if_exists="append", index=False)
-        flag_df.to_sql("flagged_data", engine, if_exists="append", index=False)
-    except Exception as e:
-        log_error(e)
-
-
-# =========================================
-# KPI
+# KPI METRICS
 # =========================================
 total = len(df)
 valid = len(clean_df)
@@ -265,9 +229,8 @@ bad = len(flag_df)
 
 score = (valid / total) * 100 if total else 0
 
-
 # =========================================
-# UI NAVIGATION
+# DASHBOARD
 # =========================================
 if page == "Dashboard":
 
@@ -275,14 +238,17 @@ if page == "Dashboard":
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric("Total", total)
-    c2.metric("Valid", valid)
-    c3.metric("Flagged", bad)
+    c1.metric("Total Records", total)
+    c2.metric("Valid Records", valid)
+    c3.metric("Flagged Records", bad)
     c4.metric("Quality Score", f"{score:.2f}%")
 
     st.plotly_chart(px.bar(x=["Valid", "Flagged"], y=[valid, bad]))
 
 
+# =========================================
+# EXPLORER
+# =========================================
 elif page == "Explorer":
 
     st.subheader("Clean Data")
@@ -292,6 +258,9 @@ elif page == "Explorer":
     st.dataframe(flag_df, use_container_width=True)
 
 
+# =========================================
+# ANALYTICS
+# =========================================
 elif page == "Analytics":
 
     st.subheader("Quality Breakdown")
@@ -309,6 +278,9 @@ elif page == "Analytics":
     st.plotly_chart(px.pie(summary, names="Issue", values="Count"))
 
 
+# =========================================
+# DOWNLOADS
+# =========================================
 elif page == "Downloads":
 
     def to_excel(data):
