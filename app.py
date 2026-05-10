@@ -1,5 +1,5 @@
 # =========================================
-# REDI ADA SYSTEM — TRUE FINAL (FIXED)
+# REDI ADA SYSTEM — TRUE FINAL UNIFIED VERSION
 # =========================================
 
 import streamlit as st
@@ -44,17 +44,13 @@ section[data-testid="stSidebar"] input {
     background:white !important;
     color:black !important;
     font-weight:700 !important;
-    border-radius:8px !important;
 }
 
 section[data-testid="stSidebar"] .stDateInput input {
     color:black !important;
 }
 
-.kpi-card {
-    padding:20px;border-radius:14px;color:white;text-align:center;
-}
-
+.kpi-card {padding:20px;border-radius:14px;color:white;text-align:center;}
 .btn-green {background:#16a34a;color:white;padding:12px;border-radius:10px;}
 .btn-red {background:#dc2626;color:white;padding:12px;border-radius:10px;}
 .btn-blue {background:#2563eb;color:white;padding:12px;border-radius:10px;}
@@ -105,7 +101,6 @@ st.sidebar.info(f"Role: {role}")
 # TOKEN
 # =========================================
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN")
-
 if not KOBO_TOKEN:
     st.error("Missing KoBo API token")
     st.stop()
@@ -125,7 +120,7 @@ elif role == "supervisor":
 page = st.sidebar.radio("Navigation", pages)
 
 # =========================================
-# FETCH (FIXED PAGINATION)
+# FETCH (FULL PAGINATION FIXED)
 # =========================================
 @st.cache_data(ttl=60)
 def fetch(uid, token):
@@ -178,7 +173,6 @@ def detect(names):
     return None
 
 DATE_COL = detect(["submission_time","date","time"])
-
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
@@ -187,7 +181,6 @@ if DATE_COL:
 
     st.sidebar.subheader("Filters")
     c1,c2 = st.sidebar.columns(2)
-
     start = c1.date_input("Start", df[DATE_COL].min())
     end = c2.date_input("End", df[DATE_COL].max())
 
@@ -200,7 +193,7 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # =========================================
-# STAT ANOMALY (FIXED)
+# STAT ANOMALY
 # =========================================
 if len(num_cols)>0:
     std = df[num_cols].std().replace(0,1)
@@ -219,7 +212,7 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE (FIXED MATCHING)
+# QUALITATIVE + HARD RULES
 # =========================================
 df["qualitative_flag"] = False
 df["qualitative_issue"] = ""
@@ -232,15 +225,29 @@ for col in df.columns:
         df.loc[mask,"qualitative_flag"] = True
         df.loc[mask,"qualitative_issue"] += f"Missing {col}; "
 
-bad = ["asdf","test","xxx","n/a","unknown"]
+# HARD RULES
+age_col = next((c for c in df.columns if "age" in c.lower()), None)
+marital_col = next((c for c in df.columns if "marital" in c.lower()), None)
+children_col = next((c for c in df.columns if "child" in c.lower()), None)
 
-for col in df.select_dtypes(include="object"):
-    mask = df[col].astype(str).str.lower().isin(bad)
+if age_col and marital_col:
+    mask = (pd.to_numeric(df[age_col], errors="coerce") < 5) & \
+           (df[marital_col].astype(str).str.contains("married", case=False, na=False))
     df.loc[mask,"qualitative_flag"] = True
-    df.loc[mask,"qualitative_issue"] += f"Bad text {col}; "
+    df.loc[mask,"qualitative_issue"] += "Age <5 but married; "
+
+if age_col:
+    mask = pd.to_numeric(df[age_col], errors="coerce") > 100
+    df.loc[mask,"qualitative_flag"] = True
+    df.loc[mask,"qualitative_issue"] += "Age >100; "
+
+if children_col:
+    mask = pd.to_numeric(df[children_col], errors="coerce") > 10
+    df.loc[mask,"qualitative_flag"] = True
+    df.loc[mask,"qualitative_issue"] += "Too many children; "
 
 # =========================================
-# FINAL FLAG LOGIC (FIXED)
+# FINAL FLAG
 # =========================================
 df["final_flag"] = (
     df["qualitative_flag"] |
@@ -292,10 +299,8 @@ if page=="Dashboard":
 # =========================================
 elif page=="Explorer":
     t1,t2 = st.tabs(["Clean","Flagged"])
-
     with t1:
         st.dataframe(clean, use_container_width=True)
-
     with t2:
         st.dataframe(flag, use_container_width=True)
 
@@ -314,7 +319,7 @@ elif page=="Quality Analytics":
     st.plotly_chart(px.pie(summary,names="Category",values="Count"))
 
 # =========================================
-# DOWNLOADS (FULL)
+# DOWNLOADS (FULL RESTORED)
 # =========================================
 elif page=="Downloads":
 
@@ -333,11 +338,41 @@ elif page=="Downloads":
         o.seek(0)
         return o
 
-    c1,c2,c3 = st.columns(3)
+    def generate_pdf():
+        buffer=io.BytesIO()
+        doc=SimpleDocTemplate(buffer)
+        styles=getSampleStyleSheet()
 
-    c1.download_button("Clean",to_excel(clean),"clean.xlsx")
-    c2.download_button("Flagged",to_excel(flag),"flagged.xlsx")
-    c3.download_button("Full",full_excel(),"full.xlsx")
+        elements=[]
+        elements.append(Paragraph("REDI Data Quality Report", styles["Title"]))
+        elements.append(Spacer(1,12))
+
+        table_data=[
+            ["Metric","Value"],
+            ["Total",str(total)],
+            ["Valid",str(valid)],
+            ["Flagged",str(bad)],
+            ["Score",f"{score:.2f}%"]
+        ]
+
+        table=Table(table_data)
+        table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),colors.grey),
+            ("TEXTCOLOR",(0,0),(-1,0),colors.whitesmoke),
+            ("GRID",(0,0),(-1,-1),1,colors.black),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+
+    c1,c2,c3,c4 = st.columns(4)
+
+    c1.download_button("Full Excel", full_excel(), "redi_full.xlsx")
+    c2.download_button("Clean Excel", to_excel(clean), "clean.xlsx")
+    c3.download_button("Flagged Excel", to_excel(flag), "flagged.xlsx")
+    c4.download_button("PDF Report", generate_pdf(), "redi_report.pdf")
 
 # =========================================
 # FOOTER
