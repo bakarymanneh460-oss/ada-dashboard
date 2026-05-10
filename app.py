@@ -1,27 +1,32 @@
 # =========================================
-# REDI ADA LOGIN SYSTEM - DEPLOYMENT SAFE
+# REDI FULL SYSTEM (RESTORED + STABLE)
 # =========================================
 
 import streamlit as st
 import pandas as pd
+import io
 import requests
 import numpy as np
-import yaml
-import io
 import os
 import logging
+import yaml
+import streamlit_authenticator as stauth
 
 from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
-import streamlit_authenticator as stauth
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+
 import plotly.express as px
 
 # =========================================
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
-    page_title="REDI ADA Login System",
+    page_title="REDI Automated Data Quality Monitoring System",
     layout="wide",
     page_icon="📊"
 )
@@ -34,19 +39,16 @@ APP_NAME = "REDI Automated Data Quality Monitoring System"
 try:
     with open("config.yaml") as file:
         config = yaml.load(file, Loader=SafeLoader)
-except Exception:
-    st.error("❌ config.yaml missing or broken")
+except:
+    st.error("❌ config.yaml missing")
     st.stop()
 
-# =========================================
-# SAFE COOKIE CHECK
-# =========================================
 if "cookie" not in config:
-    st.error("❌ Missing 'cookie' section in config.yaml")
+    st.error("❌ cookie config missing")
     st.stop()
 
 # =========================================
-# AUTHENTICATION (AUTO HASH ENABLED)
+# AUTH (FIXED)
 # =========================================
 try:
     authenticator = stauth.Authenticate(
@@ -54,36 +56,28 @@ try:
         config["cookie"].get("name", "redi_cookie"),
         config["cookie"].get("key", "redi_secure_key"),
         config["cookie"].get("expiry_days", 1),
-        auto_hash=True   # ✅ CRITICAL FIX
+        auto_hash=True   # 🔥 KEY FIX
     )
-
     authenticator.login()
-
-except Exception as e:
-    st.error("❌ Authentication system error. Check config.yaml")
+except:
+    st.error("❌ Authentication error")
     st.stop()
 
-# =========================================
-# LOGIN STATE
-# =========================================
 auth_status = st.session_state.get("authentication_status")
 
 if auth_status is False:
-    st.error("❌ Incorrect username or password")
+    st.error("Incorrect username or password")
     st.stop()
 
 if auth_status is None:
-    st.warning("Please login to continue")
+    st.warning("Please login")
     st.stop()
 
 name = st.session_state.get("name")
 username = st.session_state.get("username")
 
-# =========================================
-# ROLE SAFE ACCESS
-# =========================================
 try:
-    role = config["credentials"]["usernames"][username].get("role", "user")
+    role = config["credentials"]["usernames"][username]["role"]
 except:
     role = "user"
 
@@ -93,32 +87,38 @@ authenticator.logout("Logout", "sidebar")
 # LOGGING
 # =========================================
 os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    filename="logs/redi.log",
-    level=logging.ERROR
-)
+logging.basicConfig(filename="logs/redi.log", level=logging.ERROR)
 
 # =========================================
 # SIDEBAR
 # =========================================
-st.sidebar.title("📊 REDI ADA System")
+st.sidebar.title("📊 REDI Universal Data System")
 st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
 FORM_UID = st.sidebar.text_input("KoBo Form UID")
 
 if not FORM_UID:
-    st.warning("⚠️ Please enter KoBo Form UID")
+    st.warning("Enter KoBo UID")
     st.stop()
 
-# =========================================
-# KOBO TOKEN
-# =========================================
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN")
 
 if not KOBO_TOKEN:
-    st.error("❌ KOBO_TOKEN missing in secrets")
+    st.error("Missing KOBO_TOKEN")
     st.stop()
+
+# =========================================
+# NAVIGATION
+# =========================================
+pages = ["Dashboard", "Explorer", "Quality Analytics", "Downloads"]
+
+if role == "enumerator":
+    pages = ["Dashboard", "Explorer"]
+elif role == "supervisor":
+    pages = ["Dashboard", "Explorer", "Quality Analytics"]
+
+page = st.sidebar.radio("Navigation", pages)
 
 # =========================================
 # FETCH DATA
@@ -126,76 +126,72 @@ if not KOBO_TOKEN:
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
-
-    headers = {
-        "Authorization": f"Token {token}"
-    }
-
-    all_data = []
+    headers = {"Authorization": f"Token {token}"}
+    data_all = []
 
     while url:
         try:
             r = requests.get(url, headers=headers, timeout=30)
-
             if r.status_code != 200:
                 return None
-
             data = r.json()
-            all_data.extend(data.get("results", []))
+            data_all.extend(data.get("results", []))
             url = data.get("next")
-
         except Exception as e:
             logging.error(str(e))
             return None
 
-    return pd.json_normalize(all_data)
+    return pd.json_normalize(data_all)
 
 # =========================================
 # LOAD DATA
 # =========================================
-with st.spinner("Fetching data from Kobo..."):
+with st.spinner("Loading Kobo data..."):
     df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df is None:
-    st.error("❌ Failed to fetch data. Check UID or token.")
+    st.error("Failed to fetch data")
     st.stop()
 
 if df.empty:
-    st.warning("No data found for this form.")
+    st.warning("No data found")
     st.stop()
 
 # =========================================
-# NUMERIC COLUMNS
+# NUMERIC + FLAGS
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
-# =========================================
-# BASIC ANOMALY
-# =========================================
 if len(num_cols) > 0:
-    std = df[num_cols].std().replace(0, 1)
-    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std().replace(0,1))
     df["anomaly_flag"] = z.max(axis=1) > 4
 else:
     df["anomaly_flag"] = False
 
-# =========================================
-# AI ANOMALY
-# =========================================
 if len(num_cols) > 2:
     try:
-        model = IsolationForest(contamination=0.01, random_state=42)
+        model = IsolationForest(contamination=0.01)
         df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
-    except Exception as e:
-        logging.error(str(e))
+    except:
         df["ai_flag"] = False
 else:
     df["ai_flag"] = False
 
 # =========================================
-# FINAL FLAG
+# QUALITATIVE CHECKS (RESTORED)
 # =========================================
-df["final_flag"] = df["anomaly_flag"] | df["ai_flag"]
+df["qualitative_flag"] = False
+df["qualitative_issue"] = ""
+
+for col in df.columns:
+    if df[col].isna().any():
+        df.loc[df[col].isna(), "qualitative_flag"] = True
+        df.loc[df[col].isna(), "qualitative_issue"] += f"Missing {col}; "
+
+# =========================================
+# FINAL FLAGS
+# =========================================
+df["final_flag"] = df["anomaly_flag"] | df["ai_flag"] | df["qualitative_flag"]
 
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
@@ -211,68 +207,72 @@ score = (valid / total * 100) if total else 0
 # =========================================
 # DASHBOARD
 # =========================================
-st.title(APP_NAME)
+if page == "Dashboard":
 
-c1, c2, c3, c4 = st.columns(4)
+    st.title(APP_NAME)
 
-c1.metric("Total Records", total)
-c2.metric("Valid Records", valid)
-c3.metric("Flagged Records", bad)
-c4.metric("Quality Score", f"{score:.1f}%")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total", total)
+    c2.metric("Valid", valid)
+    c3.metric("Flagged", bad)
+    c4.metric("Quality %", f"{score:.1f}")
 
-# =========================================
-# CHART
-# =========================================
-fig = px.bar(
-    pd.DataFrame({
-        "Category": ["Valid", "Flagged"],
-        "Count": [valid, bad]
-    }),
-    x="Category",
-    y="Count",
-    text="Count"
-)
-
-st.plotly_chart(fig, use_container_width=True)
+    fig = px.bar(
+        pd.DataFrame({"Type": ["Valid","Flagged"], "Count":[valid,bad]}),
+        x="Type",
+        y="Count"
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 # =========================================
-# TABLE VIEW
+# EXPLORER
 # =========================================
-tab1, tab2 = st.tabs(["Clean Data", "Flagged Data"])
+elif page == "Explorer":
+    st.title("Explorer")
 
-with tab1:
-    st.dataframe(clean_df, use_container_width=True)
+    tab1, tab2 = st.tabs(["Clean", "Flagged"])
+    tab1.dataframe(clean_df, use_container_width=True)
+    tab2.dataframe(flag_df, use_container_width=True)
 
-with tab2:
-    st.dataframe(flag_df, use_container_width=True)
+# =========================================
+# ANALYTICS
+# =========================================
+elif page == "Quality Analytics":
+
+    st.title("Quality Analytics")
+
+    summary = pd.DataFrame({
+        "Issue": ["Anomaly", "AI", "Qualitative"],
+        "Count": [
+            df["anomaly_flag"].sum(),
+            df["ai_flag"].sum(),
+            df["qualitative_flag"].sum()
+        ]
+    })
+
+    st.dataframe(summary, use_container_width=True)
+
+    st.plotly_chart(
+        px.pie(summary, names="Issue", values="Count"),
+        use_container_width=True
+    )
 
 # =========================================
 # DOWNLOADS
 # =========================================
-def to_excel(data):
-    buffer = io.BytesIO()
-    data.to_excel(buffer, index=False)
-    return buffer.getvalue()
+elif page == "Downloads":
 
-st.subheader("Download Data")
+    st.title("Downloads")
 
-col1, col2 = st.columns(2)
+    def to_excel(data):
+        buffer = io.BytesIO()
+        data.to_excel(buffer, index=False)
+        return buffer.getvalue()
 
-with col1:
-    st.download_button(
-        "Download Clean Data",
-        to_excel(clean_df),
-        "clean_data.xlsx"
-    )
-
-with col2:
-    st.download_button(
-        "Download Flagged Data",
-        to_excel(flag_df),
-        "flagged_data.xlsx"
-    )
+    st.download_button("Download Clean", to_excel(clean_df), "clean.xlsx")
+    st.download_button("Download Flagged", to_excel(flag_df), "flagged.xlsx")
 
 # =========================================
 # FOOTER
 # =========================================
-st.caption(f"{APP_NAME} | Last Updated: {datetime.now()}")
+st.caption(f"{APP_NAME} | {datetime.now()}")
