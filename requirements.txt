@@ -3,9 +3,10 @@ pandas
 numpy
 requests
 pyyaml
+streamlit-authenticator
 scikit-learn
 plotly
-reportlab
 openpyxl
-streamlit-authenticator
-twilio
+reportlab
+sqlalchemy
+psycopg2-binary
