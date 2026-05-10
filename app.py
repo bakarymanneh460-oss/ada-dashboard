@@ -1,6 +1,6 @@
 # =========================================
-# REDI DATA QUALITY SYSTEM (FINAL SAFE PROD)
-# STREAMLIT CLOUD COMPATIBLE VERSION
+# REDI DATA QUALITY MONITORING SYSTEM
+# FINAL PRODUCTION READY VERSION
 # =========================================
 
 import streamlit as st
@@ -19,27 +19,19 @@ from yaml.loader import SafeLoader
 import plotly.express as px
 
 # =========================================
-# OPTIONAL DATABASE LAYER (SAFE IMPORT)
+# OPTIONAL DATABASE (SAFE MODE)
 # =========================================
-DB_ENABLED = True
-
-try:
-    from sqlalchemy import create_engine, text
-except Exception:
-    DB_ENABLED = False
-    create_engine = None
-    text = None
-
+DB_ENABLED = False
 engine = None
 
-if DB_ENABLED:
-    try:
-        DB_URL = st.secrets.get("DB_URL", None)
-        if DB_URL:
-            engine = create_engine(DB_URL, pool_pre_ping=True)
-    except Exception:
-        engine = None
-        DB_ENABLED = False
+try:
+    from sqlalchemy import create_engine
+    DB_URL = st.secrets.get("DB_URL", None)
+    if DB_URL:
+        engine = create_engine(DB_URL, pool_pre_ping=True)
+        DB_ENABLED = True
+except:
+    DB_ENABLED = False
 
 
 # =========================================
@@ -51,7 +43,7 @@ st.set_page_config(
     page_icon="📊"
 )
 
-APP_NAME = "REDI Automated Data Quality Monitoring System"
+APP_NAME = "REDI Data Quality Monitoring System"
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
@@ -90,7 +82,7 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Incorrect login")
+    st.error("Invalid login")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
@@ -123,7 +115,7 @@ page = st.sidebar.radio(
 
 
 # =========================================
-# DATA FETCH (SAFE)
+# DATA FETCH
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -219,20 +211,20 @@ if len(num_cols) > 0:
             df[num_cols].std().replace(0, 1)
         )
         df["anomaly_flag"] = z.max(axis=1) > 4.5
-    except:
-        pass
+    except Exception as e:
+        log_error(e)
 
 
-# AI anomaly
+# AI anomaly detection
 if ENABLE_AI and len(num_cols) > 2:
     try:
         model = IsolationForest(contamination=AI_CONTAMINATION)
         df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
-    except:
-        pass
+    except Exception as e:
+        log_error(e)
 
 
-# Missing values
+# Missing values check
 for col in df.columns:
     miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
     df.loc[miss, "quality_flag"] = True
@@ -254,21 +246,14 @@ flag_df = df[df["final_flag"]]
 
 
 # =========================================
-# OPTIONAL PERSISTENCE (SAFE)
+# OPTIONAL DB SAVE (NON-BREAKING)
 # =========================================
-def save_data():
-
-    if engine is None:
-        return
-
+if DB_ENABLED:
     try:
         df.to_sql("processed_data", engine, if_exists="append", index=False)
         flag_df.to_sql("flagged_data", engine, if_exists="append", index=False)
     except Exception as e:
         log_error(e)
-
-
-save_data()
 
 
 # =========================================
@@ -282,7 +267,7 @@ score = (valid / total) * 100 if total else 0
 
 
 # =========================================
-# UI
+# UI NAVIGATION
 # =========================================
 if page == "Dashboard":
 
@@ -293,7 +278,7 @@ if page == "Dashboard":
     c1.metric("Total", total)
     c2.metric("Valid", valid)
     c3.metric("Flagged", bad)
-    c4.metric("Score", f"{score:.2f}%")
+    c4.metric("Quality Score", f"{score:.2f}%")
 
     st.plotly_chart(px.bar(x=["Valid", "Flagged"], y=[valid, bad]))
 
@@ -333,8 +318,8 @@ elif page == "Downloads":
         buffer.seek(0)
         return buffer
 
-    st.download_button("Clean Data", to_excel(clean_df))
-    st.download_button("Flagged Data", to_excel(flag_df))
+    st.download_button("Download Clean Data", to_excel(clean_df))
+    st.download_button("Download Flagged Data", to_excel(flag_df))
 
 
 # =========================================
