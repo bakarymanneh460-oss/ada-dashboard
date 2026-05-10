@@ -1,6 +1,6 @@
 # =========================================
 # REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
-# FINAL RESTORED PRODUCTION VERSION
+# PRODUCTION APP.PY (CLEAN VERSION)
 # =========================================
 
 import streamlit as st
@@ -17,9 +17,7 @@ from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
@@ -35,11 +33,10 @@ st.set_page_config(
 )
 
 # =========================================
-# STYLE (CLEAN BLUE)
+# STYLE
 # =========================================
 st.markdown("""
 <style>
-
 .stApp {
     background: linear-gradient(135deg, #f3f7ff, #dbeafe);
 }
@@ -56,18 +53,17 @@ section[data-testid="stSidebar"] {
     color:white !important;
 }
 
+section[data-testid="stSidebar"] * {
+    color:white !important;
+}
+
 .kpi-card {
     padding:20px;
     border-radius:14px;
     color:white;
     text-align:center;
+    box-shadow:0 4px 10px rgba(0,0,0,0.2);
 }
-
-.btn-green{background:#16a34a;padding:10px;color:white;border-radius:8px;}
-.btn-red{background:#dc2626;padding:10px;color:white;border-radius:8px;}
-.btn-blue{background:#2563eb;padding:10px;color:white;border-radius:8px;}
-.btn-purple{background:#7c3aed;padding:10px;color:white;border-radius:8px;}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +81,7 @@ os.makedirs("logs", exist_ok=True)
 logging.basicConfig(filename="logs/app.log", level=logging.ERROR)
 
 # =========================================
-# AUTH
+# AUTHENTICATION
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -100,15 +96,15 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 name = st.session_state.get("name")
-auth_status = st.session_state.get("authentication_status")
+authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
-if auth_status is False:
-    st.error("Wrong login")
+if authentication_status is False:
+    st.error("Incorrect username or password")
     st.stop()
 
-if auth_status is None:
-    st.warning("Login required")
+if authentication_status is None:
+    st.warning("Please login")
     st.stop()
 
 authenticator.logout("Logout", "sidebar")
@@ -135,7 +131,6 @@ page = st.sidebar.radio(
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
-
     if not uid:
         return pd.DataFrame()
 
@@ -146,17 +141,26 @@ def fetch_data(uid, token):
     all_data = []
 
     while url:
-        r = requests.get(url, headers=headers)
-        if r.status_code != 200:
-            break
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
 
-        data = r.json()
-        all_data.extend(data.get("results", []))
-        url = data.get("next")
+            if r.status_code != 200:
+                logging.error(f"Kobo API Error: {r.status_code}")
+                break
+
+            data = r.json()
+            all_data.extend(data.get("results", []))
+            url = data.get("next")
+
+        except Exception as e:
+            logging.error(str(e))
+            break
 
     return pd.json_normalize(all_data)
 
-df = fetch_data(FORM_UID, st.secrets.get("KOBO_TOKEN", None))
+KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
+
+df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
     st.warning("No data found")
@@ -172,54 +176,54 @@ def detect(keys):
                 return col
     return None
 
-DATE_COL = detect(["submission_time","date","time"])
-ENUM_COL = detect(["enum","enumerator","name"])
+DATE_COL = detect(["submission_time", "date", "time", "_submission_time"])
+ENUM_COL = detect(["enum", "enumerator", "name", "user"])
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # =========================================
-# FILTERS + MONTH
-# =========================================
-if DATE_COL:
-    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
-
-# =========================================
-# NUMERIC + QUANTITATIVE
+# NUMERIC ANOMALY DETECTION
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
-    z = np.abs((df[num_cols] - df[num_cols].mean()) /
-               df[num_cols].std().replace(0,1))
+    std = df[num_cols].std().replace(0, 1)
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
     df["anomaly_flag"] = z.max(axis=1) > 4.5
 else:
     df["anomaly_flag"] = False
 
+# =========================================
+# AI ANOMALY DETECTION
+# =========================================
 if ENABLE_AI and len(num_cols) > 2:
-    model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
-    df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
+    try:
+        model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
+        df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
+    except Exception as e:
+        logging.error(str(e))
+        df["ai_flag"] = False
 else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE ENGINE (FULL RESTORED)
+# QUALITATIVE CHECKS
 # =========================================
 df["qualitative_flag"] = False
 
-required = ["name","gender","age","region"]
+required_keywords = ["name", "gender", "age", "region"]
 
 for col in df.columns:
-    if any(r in col.lower() for r in required):
-        miss = df[col].isna() | (df[col].astype(str).str.strip()=="")
-        df.loc[miss,"qualitative_flag"] = True
+    if any(k in col.lower() for k in required_keywords):
+        miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
+        df.loc[miss, "qualitative_flag"] = True
 
 age_col = detect(["age"])
-
 if age_col:
     bad = (pd.to_numeric(df[age_col], errors="coerce") < 0) | \
           (pd.to_numeric(df[age_col], errors="coerce") > 120)
-    df.loc[bad,"qualitative_flag"] = True
+    df.loc[bad, "qualitative_flag"] = True
 
 # =========================================
 # FINAL FLAGS
@@ -236,23 +240,21 @@ flag_df = df[df["final_flag"]]
 total = len(df)
 valid = len(clean_df)
 bad = len(flag_df)
-score = (valid/total*100) if total else 0
+score = (valid / total * 100) if total else 0
 
 # =========================================
 # DASHBOARD
 # =========================================
 if page == "Dashboard":
-
     st.title(APP_NAME)
 
-    c1,c2,c3,c4 = st.columns(4)
-
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total", total)
     c2.metric("Valid", valid)
     c3.metric("Flagged", bad)
     c4.metric("Quality Score", f"{score:.1f}%")
 
-    st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
+    st.bar_chart(pd.DataFrame({"Valid": [valid], "Flagged": [bad]}))
 
     if ENUM_COL:
         st.subheader("Enumerator Performance")
@@ -269,12 +271,13 @@ elif page == "Explorer":
 # ANALYTICS
 # =========================================
 elif page == "Quality Analytics":
-
     st.dataframe(pd.DataFrame({
-        "Type":["Anomaly","AI","Qualitative"],
-        "Count":[df["anomaly_flag"].sum(),
-                 df["ai_flag"].sum(),
-                 df["qualitative_flag"].sum()]
+        "Type": ["Anomaly", "AI", "Qualitative"],
+        "Count": [
+            df["anomaly_flag"].sum(),
+            df["ai_flag"].sum(),
+            df["qualitative_flag"].sum()
+        ]
     }))
 
 # =========================================
@@ -282,11 +285,17 @@ elif page == "Quality Analytics":
 # =========================================
 elif page == "Downloads":
 
-    st.download_button("Clean CSV",
-        clean_df.to_csv(index=False),"clean.csv")
+    st.download_button(
+        "Download Clean CSV",
+        clean_df.to_csv(index=False),
+        "clean.csv"
+    )
 
-    st.download_button("Flagged CSV",
-        flag_df.to_csv(index=False),"flagged.csv")
+    st.download_button(
+        "Download Flagged CSV",
+        flag_df.to_csv(index=False),
+        "flagged.csv"
+    )
 
 # =========================================
 # FOOTER
