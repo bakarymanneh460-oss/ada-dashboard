@@ -1,5 +1,5 @@
 # =========================================
-# REDI ADA SYSTEM — TRUE FINAL STABLE VERSION
+# REDI ADA SYSTEM — TRUE FINAL (FIXED)
 # =========================================
 
 import streamlit as st
@@ -29,7 +29,7 @@ st.set_page_config(page_title="REDI ADA System", layout="wide", page_icon="📊"
 
 APP_NAME = "REDI ADA System"
 ENABLE_AI = True
-AI_CONTAMINATION = 0.015
+AI_CONTAMINATION = 0.02
 
 # =========================================
 # STYLING (FIXED VISIBILITY)
@@ -37,8 +37,7 @@ AI_CONTAMINATION = 0.015
 st.markdown("""
 <style>
 .stApp {background: linear-gradient(135deg,#f3f7ff,#dbeafe);}
-
-section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
+section[data-testid="stSidebar"] {background:#1e3a8a !important;}
 section[data-testid="stSidebar"] * {color:white !important;}
 
 section[data-testid="stSidebar"] input {
@@ -54,7 +53,6 @@ section[data-testid="stSidebar"] .stDateInput input {
 
 .kpi-card {
     padding:20px;border-radius:14px;color:white;text-align:center;
-    box-shadow:0 4px 10px rgba(0,0,0,0.2);
 }
 
 .btn-green {background:#16a34a;color:white;padding:12px;border-radius:10px;}
@@ -85,9 +83,9 @@ authenticator = stauth.Authenticate(
 
 authenticator.login()
 
-name = st.session_state.get("name")
 auth = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
+name = st.session_state.get("name")
 
 if auth is False:
     st.error("Incorrect username or password")
@@ -116,11 +114,9 @@ if not KOBO_TOKEN:
 # SIDEBAR
 # =========================================
 st.sidebar.title("📊 REDI ADA System")
-
 FORM_UID = st.sidebar.text_input("KoBo Form UID")
 
 pages = ["Dashboard","Explorer","Quality Analytics","Downloads"]
-
 if role == "enumerator":
     pages = ["Dashboard","Explorer"]
 elif role == "supervisor":
@@ -129,35 +125,43 @@ elif role == "supervisor":
 page = st.sidebar.radio("Navigation", pages)
 
 # =========================================
-# FETCH
+# FETCH (FIXED PAGINATION)
 # =========================================
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=60)
 def fetch(uid, token):
+
     if not uid:
         return pd.DataFrame()
 
     headers = {"Authorization": f"Token {token}"}
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
+    base_url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
+    params = {"format": "json", "page_size": 1000}
 
-    data = []
-    while url:
+    all_data = []
+    next_url = base_url
+
+    while next_url:
         try:
-            r = requests.get(url, headers=headers, timeout=30)
+            r = requests.get(next_url, headers=headers, params=params, timeout=60)
+
             if r.status_code != 200:
                 break
-            j = r.json()
-            data.extend(j.get("results", []))
-            url = j.get("next")
+
+            data = r.json()
+            all_data.extend(data.get("results", []))
+
+            next_url = data.get("next")
+            params = None
+
         except:
             break
 
-    return pd.json_normalize(data)
+    return pd.json_normalize(all_data)
 
 # =========================================
 # LOAD
 # =========================================
-with st.spinner("Fetching data..."):
-    df = fetch(FORM_UID, KOBO_TOKEN)
+df = fetch(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
     st.warning("No data found")
@@ -196,12 +200,12 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # =========================================
-# STAT ANOMALY
+# STAT ANOMALY (FIXED)
 # =========================================
 if len(num_cols)>0:
     std = df[num_cols].std().replace(0,1)
     z = np.abs((df[num_cols]-df[num_cols].mean())/std)
-    df["anomaly_flag"] = (z > 3).sum(axis=1) > 2
+    df["anomaly_flag"] = (z > 2.5).any(axis=1)
 else:
     df["anomaly_flag"] = False
 
@@ -215,15 +219,15 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE
+# QUALITATIVE (FIXED MATCHING)
 # =========================================
 df["qualitative_flag"] = False
 df["qualitative_issue"] = ""
 
-required_exact = ["name","age","gender","region"]
+required = ["name","age","gender","region"]
 
 for col in df.columns:
-    if col.lower() in required_exact:
+    if any(r in col.lower() for r in required):
         mask = df[col].isna() | (df[col].astype(str).str.strip()=="")
         df.loc[mask,"qualitative_flag"] = True
         df.loc[mask,"qualitative_issue"] += f"Missing {col}; "
@@ -236,7 +240,7 @@ for col in df.select_dtypes(include="object"):
     df.loc[mask,"qualitative_issue"] += f"Bad text {col}; "
 
 # =========================================
-# FINAL FLAG LOGIC (BALANCED)
+# FINAL FLAG LOGIC (FIXED)
 # =========================================
 df["final_flag"] = (
     df["qualitative_flag"] |
@@ -247,24 +251,17 @@ df["final_flag"] = (
 # =========================================
 # WHY FLAGGED
 # =========================================
-def explain_row(r):
-    reasons = []
-
+def explain(r):
+    reasons=[]
     if r["qualitative_flag"]:
-        reasons.append(f"Data issue: {r['qualitative_issue']}")
-
+        reasons.append(r["qualitative_issue"])
     if r["anomaly_flag"]:
-        reasons.append("Unusual numeric pattern detected")
-
+        reasons.append("Stat anomaly")
     if r["ai_flag"]:
-        reasons.append("AI anomaly detected")
+        reasons.append("AI anomaly")
+    return " | ".join(reasons) if reasons else "No issues"
 
-    if not reasons:
-        return "No issues"
-
-    return " | ".join(reasons)
-
-df["why_flagged"] = df.apply(explain_row, axis=1)
+df["why_flagged"] = df.apply(explain, axis=1)
 
 # =========================================
 # SPLIT
@@ -290,11 +287,6 @@ if page=="Dashboard":
     c3.markdown(f"<div class='kpi-card' style='background:#dc2626'><h3>Flagged</h3><h1>{bad}</h1></div>",unsafe_allow_html=True)
     c4.markdown(f"<div class='kpi-card' style='background:#7c3aed'><h3>Score</h3><h1>{score:.1f}%</h1></div>",unsafe_allow_html=True)
 
-    st.plotly_chart(px.bar(
-        pd.DataFrame({"Category":["Valid","Flagged"],"Count":[valid,bad]}),
-        x="Category",y="Count",text="Count"
-    ),use_container_width=True)
-
 # =========================================
 # EXPLORER
 # =========================================
@@ -305,20 +297,16 @@ elif page=="Explorer":
         st.dataframe(clean, use_container_width=True)
 
     with t2:
-        st.subheader("⚠️ Flagged Records (with Reasons)")
-        cols = list(flag.columns)
-        if "why_flagged" in cols:
-            cols.insert(0, cols.pop(cols.index("why_flagged")))
-        st.dataframe(flag[cols], use_container_width=True)
+        st.dataframe(flag, use_container_width=True)
 
 # =========================================
 # QUALITY ANALYTICS
 # =========================================
 elif page=="Quality Analytics":
     summary = pd.DataFrame({
-        "Category": ["Quantitative","Qualitative"],
-        "Count": [
-            int(df["anomaly_flag"].sum() + df["ai_flag"].sum()),
+        "Category":["Quantitative","Qualitative"],
+        "Count":[
+            int(df["anomaly_flag"].sum()+df["ai_flag"].sum()),
             int(df["qualitative_flag"].sum())
         ]
     })
@@ -326,73 +314,30 @@ elif page=="Quality Analytics":
     st.plotly_chart(px.pie(summary,names="Category",values="Count"))
 
 # =========================================
-# DOWNLOADS (FULL RESTORED)
+# DOWNLOADS (FULL)
 # =========================================
 elif page=="Downloads":
 
-    st.title("Downloads & Reports")
-
-    def to_excel(data):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            data.to_excel(writer, index=False)
-        output.seek(0)
-        return output
+    def to_excel(d):
+        o=io.BytesIO()
+        with pd.ExcelWriter(o,engine="openpyxl") as w:
+            d.to_excel(w,index=False)
+        o.seek(0)
+        return o
 
     def full_excel():
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            clean.to_excel(writer, index=False, sheet_name="Clean")
-            flag.to_excel(writer, index=False, sheet_name="Flagged")
-        output.seek(0)
-        return output
+        o=io.BytesIO()
+        with pd.ExcelWriter(o,engine="openpyxl") as w:
+            clean.to_excel(w,index=False,sheet_name="Clean")
+            flag.to_excel(w,index=False,sheet_name="Flagged")
+        o.seek(0)
+        return o
 
-    def generate_pdf():
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer)
-        styles = getSampleStyleSheet()
+    c1,c2,c3 = st.columns(3)
 
-        elements = []
-        elements.append(Paragraph("REDI Data Quality Report", styles["Title"]))
-        elements.append(Spacer(1, 12))
-
-        table_data = [
-            ["Metric", "Value"],
-            ["Total Records", str(total)],
-            ["Valid Records", str(valid)],
-            ["Flagged Records", str(bad)],
-            ["Quality Score", f"{score:.2f}%"]
-        ]
-
-        table = Table(table_data)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.grey),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.whitesmoke),
-            ("GRID", (0,0), (-1,-1), 1, colors.black),
-        ]))
-
-        elements.append(table)
-        doc.build(elements)
-        buffer.seek(0)
-        return buffer
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
-        st.markdown('<div class="btn-blue">📊 Full Dataset Export</div>', unsafe_allow_html=True)
-        st.download_button("Download Full Excel", full_excel(), "redi_full.xlsx")
-
-    with c2:
-        st.markdown('<div class="btn-green">✅ Clean Data Export</div>', unsafe_allow_html=True)
-        st.download_button("Download Clean Excel", to_excel(clean), "clean.xlsx")
-
-    with c3:
-        st.markdown('<div class="btn-red">⚠️ Flagged Data Export</div>', unsafe_allow_html=True)
-        st.download_button("Download Flagged Excel", to_excel(flag), "flagged.xlsx")
-
-    with c4:
-        st.markdown('<div class="btn-purple">📄 PDF Report</div>', unsafe_allow_html=True)
-        st.download_button("Download PDF Report", generate_pdf(), "redi_report.pdf")
+    c1.download_button("Clean",to_excel(clean),"clean.xlsx")
+    c2.download_button("Flagged",to_excel(flag),"flagged.xlsx")
+    c3.download_button("Full",full_excel(),"full.xlsx")
 
 # =========================================
 # FOOTER
