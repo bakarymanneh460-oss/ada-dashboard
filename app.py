@@ -12,30 +12,59 @@ import os
 import logging
 import yaml
 import streamlit_authenticator as stauth
+
 from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle
+)
+
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+
 import plotly.express as px
 
 # =========================================
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
-    page_title="REDI Data Quality System",
+    page_title="REDI Automated Data Quality Monitoring System",
     layout="wide",
     page_icon="📊"
 )
 
 # =========================================
-# STYLE (SIMPLIFIED BLUE UI)
+# FULL STYLING (LIGHT BLUE THEME)
 # =========================================
 st.markdown("""
 <style>
+
 .stApp {
-    background: linear-gradient(135deg,#1e3a8a,#2563eb);
+    background: linear-gradient(135deg, #f3f7ff, #dbeafe);
+}
+
+[data-testid="stForm"] {
+    background-color: white;
+    padding: 40px;
+    border-radius: 18px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.15);
+}
+
+input {
+    border-radius: 8px !important;
+}
+
+button[kind="primary"] {
+    background-color: #1e3a8a !important;
+    color: white !important;
+    border-radius: 10px !important;
+    font-weight: bold !important;
 }
 
 section[data-testid="stSidebar"] {
@@ -46,13 +75,6 @@ section[data-testid="stSidebar"] * {
     color:white !important;
 }
 
-section[data-testid="stSidebar"] input {
-    background:white !important;
-    color:black !important;
-    font-weight:700 !important;
-    border-radius:8px !important;
-}
-
 .kpi-card {
     padding:20px;
     border-radius:14px;
@@ -61,28 +83,34 @@ section[data-testid="stSidebar"] input {
     box-shadow:0 4px 10px rgba(0,0,0,0.2);
 }
 
-.btn-green {background:#16a34a;color:white;padding:10px;border-radius:8px;font-weight:bold;}
-.btn-red {background:#dc2626;color:white;padding:10px;border-radius:8px;font-weight:bold;}
-.btn-blue {background:#2563eb;color:white;padding:10px;border-radius:8px;font-weight:bold;}
+.btn-green {background:#16a34a;color:white;padding:12px;border-radius:10px;}
+.btn-red {background:#dc2626;color:white;padding:12px;border-radius:10px;}
+.btn-blue {background:#2563eb;color:white;padding:12px;border-radius:10px;}
+.btn-purple {background:#7c3aed;color:white;padding:12px;border-radius:10px;}
+
 </style>
 """, unsafe_allow_html=True)
 
 # =========================================
 # CONFIG
 # =========================================
-APP_NAME = "REDI Data Quality Monitoring System"
-
+APP_NAME = "REDI Automated Data Quality Monitoring System"
 ENABLE_AI = True
-AI_CONTAMINATION = 0.01
+AI_CONTAMINATION = 0.005
 
 # =========================================
 # LOGGING
 # =========================================
 os.makedirs("logs", exist_ok=True)
-logging.basicConfig(filename="logs/app.log", level=logging.ERROR)
+
+logging.basicConfig(
+    filename="logs/redi.log",
+    level=logging.ERROR,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 # =========================================
-# AUTH (SAFE)
+# AUTHENTICATION
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -97,17 +125,18 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 name = st.session_state.get("name")
-status = st.session_state.get("authentication_status")
+authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
-if status is False:
-    st.error("Wrong login")
-    st.stop()
-if status is None:
-    st.warning("Login required")
+if authentication_status is False:
+    st.error("Incorrect username or password")
     st.stop()
 
-authenticator.logout("Logout","sidebar")
+if authentication_status is None:
+    st.warning("Please login")
+    st.stop()
+
+authenticator.logout("Logout", "sidebar")
 
 role = config["credentials"]["usernames"][username]["role"]
 
@@ -115,11 +144,15 @@ st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
 # =========================================
-# DATA INPUT
+# SIDEBAR
 # =========================================
+st.sidebar.title("📊 REDI Data System")
 FORM_UID = st.sidebar.text_input("Kobo Form UID")
 
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
+page = st.sidebar.radio(
+    "Navigation",
+    ["Dashboard", "Explorer", "Quality Analytics", "Downloads"]
+)
 
 # =========================================
 # FETCH DATA
@@ -131,21 +164,23 @@ def fetch_data(uid, token):
         return pd.DataFrame()
 
     headers = {"Authorization": f"Token {token}"} if token else {}
+
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    out = []
+    data_all = []
 
     while url:
-        r = requests.get(url, headers=headers)
+        r = requests.get(url, headers=headers, timeout=30)
         if r.status_code != 200:
             break
-        js = r.json()
-        out.extend(js.get("results", []))
-        url = js.get("next")
 
-    return pd.json_normalize(out)
+        data = r.json()
+        data_all.extend(data.get("results", []))
+        url = data.get("next")
 
-df = fetch_data(FORM_UID, KOBO_TOKEN)
+    return pd.json_normalize(data_all)
+
+df = fetch_data(FORM_UID, st.secrets.get("KOBO_TOKEN", None))
 
 if df.empty:
     st.warning("No data found")
@@ -155,109 +190,100 @@ if df.empty:
 # COLUMN DETECTION
 # =========================================
 def detect(keys):
-    for c in df.columns:
+    for col in df.columns:
         for k in keys:
-            if k in c.lower():
-                return c
+            if k in col.lower():
+                return col
     return None
 
-DATE_COL = detect(["submission","date","time"])
-ENUM_COL = detect(["enum","interviewer","user"])
-REGION_COL = detect(["region","district"])
-HH_COL = detect(["hh","household"])
-
-if "_submission_time" in df.columns:
-    DATE_COL = "_submission_time"
+DATE_COL = detect(["submission_time", "date", "time"])
+ENUM_COL = detect(["enum", "enumerator", "name"])
 
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # =========================================
-# FILTERS
-# =========================================
-if DATE_COL:
-    c1,c2 = st.sidebar.columns(2)
-    start = c1.date_input("Start", df[DATE_COL].min())
-    end = c2.date_input("End", df[DATE_COL].max())
-
-    df = df[(df[DATE_COL]>=pd.to_datetime(start)) &
-            (df[DATE_COL]<=pd.to_datetime(end))]
-
-# =========================================
-# MONTH
-# =========================================
-if DATE_COL:
-    df["Month"] = df[DATE_COL].dt.to_period("M").astype(str)
-
-# =========================================
-# NUMERIC COLUMNS
+# QUANTITATIVE (ANOMALY + AI ONLY)
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
-# =========================================
-# QUANTITATIVE ANOMALY ONLY (FIXED)
-# =========================================
 if len(num_cols) > 0:
-    std = df[num_cols].std().replace(0,1)
-    z = np.abs((df[num_cols] - df[num_cols].mean())/std)
-
-    df["quant_anomaly"] = z.max(axis=1) > 4.5
+    z = np.abs((df[num_cols] - df[num_cols].mean()) / df[num_cols].std().replace(0, 1))
+    df["anomaly_flag"] = z.max(axis=1) > 4.5
 else:
-    df["quant_anomaly"] = False
+    df["anomaly_flag"] = False
 
-# =========================================
-# AI ANOMALY
-# =========================================
 if ENABLE_AI and len(num_cols) > 2:
-    try:
-        model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
-        df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
-    except:
-        df["ai_flag"] = False
+    model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
+    df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
 else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE RULE ENGINE (NEW)
+# QUALITATIVE ENGINE (FULL)
 # =========================================
-text_cols = df.select_dtypes(include=["object"]).columns
+df["qualitative_flag"] = False
+df["qualitative_issue"] = ""
 
-def text_quality_checks(row):
-    issues = 0
+# Required fields
+required_keywords = ["name", "gender", "age", "region"]
+for col in df.columns:
+    if any(k in col.lower() for k in required_keywords):
+        miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
+        df.loc[miss, "qualitative_flag"] = True
+        df.loc[miss, "qualitative_issue"] += f"Missing {col}; "
 
-    # required field check
-    for c in text_cols:
-        if pd.isna(row[c]) or str(row[c]).strip() == "":
-            issues += 1
+# Age rule
+age_col = detect(["age"])
+if age_col:
+    bad_age = (pd.to_numeric(df[age_col], errors="coerce") < 0) | \
+              (pd.to_numeric(df[age_col], errors="coerce") > 120)
+    df.loc[bad_age, "qualitative_flag"] = True
+    df.loc[bad_age, "qualitative_issue"] += "Invalid age; "
 
-    # spelling / inconsistency heuristic (simple version)
-    for c in text_cols:
-        val = str(row[c]).lower()
-        if len(val) > 0 and ("???", "asdf", "1234") in val:
-            issues += 1
+# Skip logic
+marital = detect(["marital"])
+children = detect(["child"])
+if marital and children:
+    mask = df[marital].astype(str).str.lower().str.contains("single", na=False) & \
+           (pd.to_numeric(df[children], errors="coerce") > 5)
+    df.loc[mask, "qualitative_flag"] = True
+    df.loc[mask, "qualitative_issue"] += "Skip logic error; "
 
-    return issues
+# Text inconsistency
+bad_words = ["test", "asdf", "xxx", "unknown"]
+for col in df.select_dtypes(include=["object"]).columns:
+    mask = df[col].astype(str).str.lower().isin(bad_words)
+    df.loc[mask, "qualitative_flag"] = True
 
-if len(text_cols) > 0:
-    df["qual_issue_count"] = df.apply(text_quality_checks, axis=1)
-    df["qual_flag"] = df["qual_issue_count"] > 0
-else:
-    df["qual_flag"] = False
+# Spelling issues (EN + ID)
+spell = {
+    "teh":"the","recieve":"receive",
+    "tdak":"tidak","sya":"saya"
+}
+
+for col in df.select_dtypes(include=["object"]).columns:
+    text = df[col].astype(str).str.lower()
+    for w in spell:
+        mask = text.str.contains(w, na=False)
+        df.loc[mask, "qualitative_flag"] = True
+
+# Advanced rule
+edu = detect(["education"])
+if edu and age_col:
+    mask = df[edu].astype(str).str.lower().str.contains("phd|doctorate") & \
+           (pd.to_numeric(df[age_col], errors="coerce") < 15)
+    df.loc[mask, "qualitative_flag"] = True
 
 # =========================================
-# FINAL FLAG LOGIC (ONLY QUAL + QUANT)
+# FINAL FLAGS (ONLY REAL ERRORS)
 # =========================================
-df["flag_score"] = (
-    df["quant_anomaly"].astype(int) +
-    df["ai_flag"].astype(int) +
-    df["qual_flag"].astype(int)
+df["final_flag"] = (
+    df["anomaly_flag"] |
+    df["ai_flag"] |
+    df["qualitative_flag"]
 )
 
-df["final_flag"] = df["flag_score"] >= 2
-
-# =========================================
-# CLEAN / FLAGGED
-# =========================================
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
@@ -265,58 +291,55 @@ total = len(df)
 valid = len(clean_df)
 bad = len(flag_df)
 
-score = (valid/total*100) if total else 0
+score = (valid / total * 100) if total else 0
 
 # =========================================
 # DASHBOARD
 # =========================================
-if role != "enumerator":
+if page == "Dashboard":
 
     st.title(APP_NAME)
 
-    c1,c2,c3,c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
 
-    c1.markdown(f'<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>', unsafe_allow_html=True)
-
-    st.subheader("Quality Overview")
+    c1.markdown(f"""<div class="kpi-card" style="background:#2563eb"><h3>Total</h3><h1>{total}</h1></div>""", unsafe_allow_html=True)
+    c2.markdown(f"""<div class="kpi-card" style="background:#16a34a"><h3>Valid</h3><h1>{valid}</h1></div>""", unsafe_allow_html=True)
+    c3.markdown(f"""<div class="kpi-card" style="background:#dc2626"><h3>Flagged</h3><h1>{bad}</h1></div>""", unsafe_allow_html=True)
+    c4.markdown(f"""<div class="kpi-card" style="background:#7c3aed"><h3>Score</h3><h1>{score:.1f}%</h1></div>""", unsafe_allow_html=True)
 
     st.bar_chart(pd.DataFrame({"Valid":[valid],"Flagged":[bad]}))
 
 # =========================================
 # EXPLORER
 # =========================================
-if role != "enumerator" and st.sidebar.radio("Nav",["Dashboard","Explorer"])=="Explorer":
-
+elif page == "Explorer":
     st.title("Explorer")
+    st.dataframe(clean_df)
+    st.dataframe(flag_df)
 
-    tab1,tab2 = st.tabs(["Clean","Flagged"])
+# =========================================
+# ANALYTICS
+# =========================================
+elif page == "Quality Analytics":
 
-    with tab1:
-        st.dataframe(clean_df)
+    st.title("Analytics")
 
-    with tab2:
-        st.dataframe(flag_df)
+    st.dataframe(pd.DataFrame({
+        "Type":["Anomaly","AI","Qualitative"],
+        "Count":[df["anomaly_flag"].sum(), df["ai_flag"].sum(), df["qualitative_flag"].sum()]
+    }))
 
 # =========================================
 # DOWNLOADS
 # =========================================
-if role == "supervisor":
+elif page == "Downloads":
 
     st.title("Downloads")
 
-    def to_excel(d):
-        b = io.BytesIO()
-        with pd.ExcelWriter(b, engine="openpyxl") as w:
-            d.to_excel(w,index=False)
-        return b
-
-    st.download_button("Clean", to_excel(clean_df), "clean.xlsx")
-    st.download_button("Flagged", to_excel(flag_df), "flagged.xlsx")
+    st.download_button("Clean Data", clean_df.to_csv(index=False), "clean.csv")
+    st.download_button("Flagged Data", flag_df.to_csv(index=False), "flagged.csv")
 
 # =========================================
 # FOOTER
 # =========================================
-st.caption(f"{APP_NAME} | Updated {datetime.now()}")
+st.caption(f"{APP_NAME} | {datetime.now()}")
