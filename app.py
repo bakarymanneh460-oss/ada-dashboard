@@ -1,5 +1,5 @@
 # =========================================
-# REDI ADA LOGIN SYSTEM - FINAL STABLE APP
+# REDI ADA LOGIN SYSTEM - DEPLOYMENT SAFE
 # =========================================
 
 import streamlit as st
@@ -34,33 +34,58 @@ APP_NAME = "REDI Automated Data Quality Monitoring System"
 try:
     with open("config.yaml") as file:
         config = yaml.load(file, Loader=SafeLoader)
-except Exception as e:
-    st.error("❌ config.yaml not found or broken")
+except Exception:
+    st.error("❌ config.yaml missing or broken")
     st.stop()
 
 # =========================================
-# AUTHENTICATION
+# SAFE COOKIE CHECK
 # =========================================
-authenticator = stauth.Authenticate(
-    config["credentials"],
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"]
-)
+if "cookie" not in config:
+    st.error("❌ Missing 'cookie' section in config.yaml")
+    st.stop()
 
-authenticator.login()
+# =========================================
+# AUTHENTICATION (AUTO HASH ENABLED)
+# =========================================
+try:
+    authenticator = stauth.Authenticate(
+        config["credentials"],
+        config["cookie"].get("name", "redi_cookie"),
+        config["cookie"].get("key", "redi_secure_key"),
+        config["cookie"].get("expiry_days", 1),
+        auto_hash=True   # ✅ CRITICAL FIX
+    )
 
-if st.session_state.get("authentication_status") is False:
+    authenticator.login()
+
+except Exception as e:
+    st.error("❌ Authentication system error. Check config.yaml")
+    st.stop()
+
+# =========================================
+# LOGIN STATE
+# =========================================
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status is False:
     st.error("❌ Incorrect username or password")
     st.stop()
 
-if st.session_state.get("authentication_status") is None:
+if auth_status is None:
     st.warning("Please login to continue")
     st.stop()
 
-name = st.session_state["name"]
-username = st.session_state["username"]
-role = config["credentials"]["usernames"][username]["role"]
+name = st.session_state.get("name")
+username = st.session_state.get("username")
+
+# =========================================
+# ROLE SAFE ACCESS
+# =========================================
+try:
+    role = config["credentials"]["usernames"][username].get("role", "user")
+except:
+    role = "user"
 
 authenticator.logout("Logout", "sidebar")
 
@@ -96,7 +121,7 @@ if not KOBO_TOKEN:
     st.stop()
 
 # =========================================
-# FETCH DATA (ROBUST)
+# FETCH DATA
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
