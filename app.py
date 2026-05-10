@@ -40,13 +40,15 @@ st.set_page_config(
 )
 
 # =========================================
-# FULL STYLING
+# STYLING
 # =========================================
-st.markdown("""<style>
+st.markdown("""
+<style>
 .stApp {
     background: linear-gradient(135deg,#f3f7ff,#dbeafe);
 }
-</style>""", unsafe_allow_html=True)
+</style>
+""", unsafe_allow_html=True)
 
 # =========================================
 # CONFIG
@@ -71,7 +73,7 @@ logging.basicConfig(
 )
 
 # =========================================
-# AUTH
+# AUTHENTICATION
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -102,7 +104,7 @@ authenticator.logout("Logout", "sidebar")
 role = config["credentials"]["usernames"][username]["role"]
 
 # =========================================
-# AUDIT
+# AUDIT TRAIL
 # =========================================
 os.makedirs("audit", exist_ok=True)
 
@@ -166,7 +168,7 @@ def fetch_data(uid, token):
     return pd.json_normalize(all_data)
 
 # =========================================
-# LOAD DATA (FIXED)
+# LOAD DATA (IMPORTANT FIX)
 # =========================================
 raw_df = fetch_data(FORM_UID, KOBO_TOKEN)
 
@@ -177,7 +179,7 @@ if raw_df.empty:
 df = raw_df.copy()
 
 # =========================================
-# DETECT COLUMNS
+# COLUMN DETECTION
 # =========================================
 def detect(names):
     for col in df.columns:
@@ -192,10 +194,11 @@ if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # =========================================
-# FILTERS (APPLY ONLY TO df)
+# FILTERS (WORK ON df ONLY)
 # =========================================
-if DATE_COL:
+st.sidebar.subheader("Filters")
 
+if DATE_COL:
     start = st.sidebar.date_input("Start", df[DATE_COL].min())
     end = st.sidebar.date_input("End", df[DATE_COL].max())
 
@@ -218,17 +221,13 @@ if search:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 if len(num_cols) > 0:
-
     std = df[num_cols].std().replace(0, 1)
-
     z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
-
     df["anomaly_flag"] = z.max(axis=1) > 4.5
-
 else:
     df["anomaly_flag"] = False
 
-# AI
+# AI MODEL
 if ENABLE_AI and len(num_cols) > 2:
     model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
     df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
@@ -236,10 +235,8 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITY FLAGS
+# FINAL FLAGS
 # =========================================
-df["qualitative_flag"] = False
-
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
     df["ai_flag"].astype(int)
@@ -251,9 +248,9 @@ clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
 # =========================================
-# KPI (FIXED HERE)
+# KPI (FIXED KOBO TOTAL)
 # =========================================
-total = len(raw_df)   # ✅ KOBO TRUE TOTAL
+total = len(raw_df)   # TRUE KOBO TOTAL
 valid = len(clean_df)
 bad = len(flag_df)
 
@@ -272,15 +269,15 @@ c3.metric("Flagged Records", bad)
 c4.metric("Quality Score", f"{score:.1f}%")
 
 # =========================================
-# EXPLORER
+# DATA VIEW
 # =========================================
-st.subheader("Clean Data")
+st.subheader("Clean Records")
 st.dataframe(clean_df, use_container_width=True)
 
-st.subheader("Flagged Data")
+st.subheader("Flagged Records")
 st.dataframe(flag_df, use_container_width=True)
 
 # =========================================
 # FOOTER
 # =========================================
-st.caption(f"{APP_NAME} | Updated {datetime.now()}")
+st.caption(f"{APP_NAME} | Last Updated: {datetime.now()}")
