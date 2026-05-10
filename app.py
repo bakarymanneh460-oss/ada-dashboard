@@ -1,37 +1,26 @@
 # =========================================
-# REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
-# ENTERPRISE FINAL PRODUCTION app.py
+# REDI DATA QUALITY SYSTEM (ENTERPRISE FINAL)
+# FULLY PERSISTENT VERSION
 # =========================================
 
 import streamlit as st
 import pandas as pd
-import io
-import requests
 import numpy as np
+import requests
 import os
 import logging
 import yaml
-import streamlit_authenticator as stauth
+import io
 
-from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
-
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle
-)
-
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+from yaml.loader import SafeLoader
+from sqlalchemy import create_engine, text
 
 import plotly.express as px
 
 # =========================================
-# PAGE CONFIG
+# CONFIG
 # =========================================
 st.set_page_config(
     page_title="REDI Data Quality System",
@@ -39,61 +28,90 @@ st.set_page_config(
     page_icon="📊"
 )
 
-APP_NAME = "REDI Automated Data Quality Monitoring System"
+APP_NAME = "REDI Data Quality Monitoring System"
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
 
+# =========================================
+# DATABASE (PERSISTENCE LAYER)
+# =========================================
+DB_URL = st.secrets.get("DB_URL", None)
+engine = create_engine(DB_URL, pool_pre_ping=True) if DB_URL else None
+
+
+def init_db():
+
+    if engine is None:
+        return
+
+    with engine.begin() as conn:
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS processed_data (
+            id SERIAL PRIMARY KEY,
+            payload JSONB,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS flagged_data (
+            id SERIAL PRIMARY KEY,
+            payload JSONB,
+            flag_score INT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """))
+
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id SERIAL PRIMARY KEY,
+            user_name TEXT,
+            action TEXT,
+            status TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """))
+
+
+init_db()
 
 # =========================================
-# LOGGING (ENTERPRISE SAFE)
+# LOGGING
 # =========================================
-os.makedirs("logs", exist_ok=True)
-
 logging.basicConfig(
-    filename="logs/redi.log",
+    filename="redi.log",
     level=logging.ERROR,
     format="%(asctime)s %(levelname)s %(message)s"
 )
+
 
 def log_error(e):
     logging.error(str(e))
 
 
 def log_event(user, action, status="success"):
-    os.makedirs("audit", exist_ok=True)
 
-    df = pd.DataFrame([{
-        "user": user,
-        "action": action,
-        "status": status,
-        "time": datetime.utcnow()
-    }])
+    if engine is None:
+        return
 
-    file = "audit/events.csv"
-
-    if os.path.exists(file):
-        old = pd.read_csv(file)
-        df = pd.concat([old, df])
-
-    df.to_csv(file, index=False)
-
-
-# =========================================
-# SAFE SECRETS
-# =========================================
-def safe_secret(key, default=None):
     try:
-        return st.secrets.get(key, default)
-    except Exception:
-        return default
-
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO audit_logs (user_name, action, status)
+                VALUES (:u, :a, :s)
+            """), {"u": user, "a": action, "s": status})
+    except Exception as e:
+        log_error(e)
 
 # =========================================
 # AUTH
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
+
+import streamlit_authenticator as stauth
 
 authenticator = stauth.Authenticate(
     config["credentials"],
@@ -104,61 +122,58 @@ authenticator = stauth.Authenticate(
 
 authenticator.login()
 
-auth_status = st.session_state.get("authentication_status")
-
-if auth_status is False:
-    st.error("Incorrect username or password")
+if st.session_state.get("authentication_status") is False:
+    st.error("Wrong credentials")
     st.stop()
 
-if auth_status is None:
-    st.warning("Please login")
+if st.session_state.get("authentication_status") is None:
+    st.warning("Login required")
     st.stop()
 
-username = st.session_state.get("username")
-name = st.session_state.get("name")
+username = st.session_state["username"]
+name = st.session_state["name"]
 
 authenticator.logout("Logout", "sidebar")
 
-log_event(username, "login")
-
-
-# =========================================
-# ROLE SYSTEM
-# =========================================
 role = config["credentials"]["usernames"][username]["role"]
 
 st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
+log_event(username, "login")
 
 # =========================================
-# ROLE ENFORCEMENT (ENTERPRISE FIX)
+# ROLE CONTROL
 # =========================================
-def enforce_role(role, page):
+def enforce(role, page):
 
     rules = {
         "enumerator": ["Dashboard", "Explorer"],
-        "supervisor": ["Dashboard", "Explorer", "Quality Analytics"],
-        "admin": ["Dashboard", "Explorer", "Quality Analytics", "Downloads"]
+        "supervisor": ["Dashboard", "Explorer", "Analytics"],
+        "admin": ["Dashboard", "Explorer", "Analytics", "Downloads"]
     }
 
     if page not in rules.get(role, []):
-        st.error("Access Denied")
+        st.error("Access denied")
         st.stop()
 
-
 # =========================================
-# SIDEBAR
+# SIDEBAR INPUT
 # =========================================
-st.sidebar.title("📊 REDI System")
+st.sidebar.title("REDI System")
 
 FORM_UID = st.sidebar.text_input("Kobo Form UID")
+KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-KOBO_TOKEN = safe_secret("KOBO_TOKEN", None)
+page = st.sidebar.radio(
+    "Navigation",
+    ["Dashboard", "Explorer", "Analytics", "Downloads"]
+)
 
+enforce(role, page)
 
 # =========================================
-# SAFE DATA FETCH (RETRY LOGIC)
+# DATA FETCH (SAFE)
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -170,7 +185,7 @@ def fetch_data(uid, token):
 
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    results = []
+    data_all = []
 
     while url:
         try:
@@ -180,57 +195,38 @@ def fetch_data(uid, token):
                 log_error(f"API error {r.status_code}")
                 break
 
-            data = r.json()
-            results.extend(data.get("results", []))
-            url = data.get("next")
+            res = r.json()
+            data_all.extend(res.get("results", []))
+            url = res.get("next")
 
         except Exception as e:
             log_error(e)
             break
 
-    return pd.json_normalize(results)
+    return pd.json_normalize(data_all)
 
 
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    st.warning("No data found")
+    st.warning("No data available")
     st.stop()
-
-
-# =========================================
-# SYSTEM HEALTH
-# =========================================
-def system_health(df):
-
-    return {
-        "rows": len(df),
-        "columns": len(df.columns),
-        "missing_rate": float(df.isna().mean().mean()),
-        "status": "GREEN" if len(df) > 0 else "RED"
-    }
-
-
-st.sidebar.success(f"System: {system_health(df)['status']}")
-
 
 # =========================================
 # COLUMN DETECTION
 # =========================================
-def detect(names):
+def detect(cols):
 
-    for col in df.columns:
-        for n in names:
-            if n in col.lower():
-                return col
+    for c in df.columns:
+        for k in cols:
+            if k in c.lower():
+                return c
     return None
 
 
-DATE_COL = detect(["submission", "date", "time"])
-
+DATE_COL = detect(["date", "time", "submission"])
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-
 
 # =========================================
 # FILTERS
@@ -238,14 +234,11 @@ if DATE_COL:
 st.sidebar.subheader("Filters")
 
 if DATE_COL:
-
     start = st.sidebar.date_input("Start", df[DATE_COL].min())
     end = st.sidebar.date_input("End", df[DATE_COL].max())
 
-    df = df[
-        (df[DATE_COL] >= pd.to_datetime(start)) &
-        (df[DATE_COL] <= pd.to_datetime(end))
-    ]
+    df = df[(df[DATE_COL] >= pd.to_datetime(start)) &
+            (df[DATE_COL] <= pd.to_datetime(end))]
 
 search = st.sidebar.text_input("Search")
 
@@ -255,54 +248,41 @@ if search:
         axis=1
     )]
 
-
 # =========================================
-# NUMERIC COLUMNS
+# QUALITY ENGINE
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
-
-# =========================================
-# ANOMALY DETECTION
-# =========================================
 df["anomaly_flag"] = False
+df["ai_flag"] = False
+df["quality_flag"] = False
 
 if len(num_cols) > 0:
+
     try:
         z = np.abs(
             (df[num_cols] - df[num_cols].mean()) /
             df[num_cols].std().replace(0, 1)
         )
         df["anomaly_flag"] = z.max(axis=1) > 4.5
-    except Exception as e:
-        log_error(e)
-
-
-# =========================================
-# AI DETECTION
-# =========================================
-df["ai_flag"] = False
+    except:
+        pass
 
 if ENABLE_AI and len(num_cols) > 2:
+
     try:
-        model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
+        model = IsolationForest(contamination=AI_CONTAMINATION)
         df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
-    except Exception as e:
-        log_error(e)
+    except:
+        pass
 
-
-# =========================================
-# QUALITY CHECKS
-# =========================================
-df["quality_flag"] = False
-
+# Missing values rule
 for col in df.columns:
     missing = df[col].isna() | (df[col].astype(str).str.strip() == "")
     df.loc[missing, "quality_flag"] = True
 
-
 # =========================================
-# FINAL SCORING
+# FINAL SCORE
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
@@ -312,10 +292,28 @@ df["flag_score"] = (
 
 df["final_flag"] = df["flag_score"] >= 1
 
-
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
+# =========================================
+# PERSISTENCE (CRITICAL FIX)
+# =========================================
+def save():
+
+    if engine is None:
+        return
+
+    try:
+        df.to_sql("processed_data", engine, if_exists="append", index=False)
+
+        flagged = df[df["final_flag"] == True]
+        flagged.to_sql("flagged_data", engine, if_exists="append", index=False)
+
+    except Exception as e:
+        log_error(e)
+
+
+save()
 
 # =========================================
 # KPI
@@ -326,20 +324,8 @@ bad = len(flag_df)
 
 score = (valid / total) * 100 if total else 0
 
-
 # =========================================
-# NAVIGATION
-# =========================================
-page = st.sidebar.radio(
-    "Navigation",
-    ["Dashboard", "Explorer", "Quality Analytics", "Downloads"]
-)
-
-enforce_role(role, page)
-
-
-# =========================================
-# DASHBOARD
+# UI
 # =========================================
 if page == "Dashboard":
 
@@ -350,32 +336,24 @@ if page == "Dashboard":
     c1.metric("Total", total)
     c2.metric("Valid", valid)
     c3.metric("Flagged", bad)
-    c4.metric("Quality Score", f"{score:.2f}%")
+    c4.metric("Score", f"{score:.2f}%")
 
-    fig = px.bar(x=["Valid", "Flagged"], y=[valid, bad])
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(px.bar(x=["Valid", "Flagged"], y=[valid, bad]))
 
-
-# =========================================
-# EXPLORER
-# =========================================
 elif page == "Explorer":
 
-    st.title("Data Explorer")
+    st.subheader("Clean Data")
+    st.dataframe(clean_df)
 
-    st.dataframe(clean_df, use_container_width=True)
-    st.dataframe(flag_df, use_container_width=True)
+    st.subheader("Flagged Data")
+    st.dataframe(flag_df)
 
+elif page == "Analytics":
 
-# =========================================
-# ANALYTICS
-# =========================================
-elif page == "Quality Analytics":
-
-    st.title("Analytics")
+    st.subheader("Issue Summary")
 
     summary = pd.DataFrame({
-        "Issue": ["Anomaly", "AI", "Missing"],
+        "Type": ["Anomaly", "AI", "Missing"],
         "Count": [
             df["anomaly_flag"].sum(),
             df["ai_flag"].sum(),
@@ -384,27 +362,19 @@ elif page == "Quality Analytics":
     })
 
     st.dataframe(summary)
+    st.plotly_chart(px.pie(summary, names="Type", values="Count"))
 
-    st.plotly_chart(px.pie(summary, names="Issue", values="Count"))
-
-
-# =========================================
-# DOWNLOADS
-# =========================================
 elif page == "Downloads":
 
-    st.title("Exports")
+    def to_excel(d):
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            d.to_excel(writer, index=False)
+        buffer.seek(0)
+        return buffer
 
-    def to_excel(data):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            data.to_excel(writer, index=False)
-        output.seek(0)
-        return output
-
-    st.download_button("Clean Data", to_excel(clean_df), file_name="clean.xlsx")
-    st.download_button("Flagged Data", to_excel(flag_df), file_name="flagged.xlsx")
-
+    st.download_button("Clean Data", to_excel(clean_df))
+    st.download_button("Flagged Data", to_excel(flag_df))
 
 # =========================================
 # FOOTER
