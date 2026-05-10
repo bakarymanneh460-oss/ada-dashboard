@@ -3,19 +3,19 @@ credentials:
     admin:
       email: admin@redi.com
       name: Admin User
-      password: 1234567890
+      password: admin123
       role: admin
 
     supervisor:
       email: sup@redi.com
       name: Supervisor User
-      password: 1234567890
+      password: sup123
       role: supervisor
 
     enumerator:
       email: enum@redi.com
       name: Enumerator User
-      password: 1234567890
+      password: enum123
       role: enumerator
 
 cookie:
