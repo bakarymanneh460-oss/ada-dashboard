@@ -1,6 +1,6 @@
 # =========================================
-# REDI DATA QUALITY SYSTEM (ENTERPRISE FINAL)
-# FULLY PERSISTENT VERSION
+# REDI DATA QUALITY SYSTEM (FINAL SAFE PROD)
+# STREAMLIT CLOUD COMPATIBLE VERSION
 # =========================================
 
 import streamlit as st
@@ -15,12 +15,35 @@ import io
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 from yaml.loader import SafeLoader
-from sqlalchemy import create_engine, text
 
 import plotly.express as px
 
 # =========================================
-# CONFIG
+# OPTIONAL DATABASE LAYER (SAFE IMPORT)
+# =========================================
+DB_ENABLED = True
+
+try:
+    from sqlalchemy import create_engine, text
+except Exception:
+    DB_ENABLED = False
+    create_engine = None
+    text = None
+
+engine = None
+
+if DB_ENABLED:
+    try:
+        DB_URL = st.secrets.get("DB_URL", None)
+        if DB_URL:
+            engine = create_engine(DB_URL, pool_pre_ping=True)
+    except Exception:
+        engine = None
+        DB_ENABLED = False
+
+
+# =========================================
+# PAGE CONFIG
 # =========================================
 st.set_page_config(
     page_title="REDI Data Quality System",
@@ -28,85 +51,29 @@ st.set_page_config(
     page_icon="📊"
 )
 
-APP_NAME = "REDI Data Quality Monitoring System"
+APP_NAME = "REDI Automated Data Quality Monitoring System"
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
 
-# =========================================
-# DATABASE (PERSISTENCE LAYER)
-# =========================================
-DB_URL = st.secrets.get("DB_URL", None)
-engine = create_engine(DB_URL, pool_pre_ping=True) if DB_URL else None
-
-
-def init_db():
-
-    if engine is None:
-        return
-
-    with engine.begin() as conn:
-
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS processed_data (
-            id SERIAL PRIMARY KEY,
-            payload JSONB,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """))
-
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS flagged_data (
-            id SERIAL PRIMARY KEY,
-            payload JSONB,
-            flag_score INT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """))
-
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id SERIAL PRIMARY KEY,
-            user_name TEXT,
-            action TEXT,
-            status TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        );
-        """))
-
-
-init_db()
 
 # =========================================
 # LOGGING
 # =========================================
+os.makedirs("logs", exist_ok=True)
+
 logging.basicConfig(
-    filename="redi.log",
+    filename="logs/redi.log",
     level=logging.ERROR,
     format="%(asctime)s %(levelname)s %(message)s"
 )
-
 
 def log_error(e):
     logging.error(str(e))
 
 
-def log_event(user, action, status="success"):
-
-    if engine is None:
-        return
-
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO audit_logs (user_name, action, status)
-                VALUES (:u, :a, :s)
-            """), {"u": user, "a": action, "s": status})
-    except Exception as e:
-        log_error(e)
-
 # =========================================
-# AUTH
+# AUTHENTICATION
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -123,11 +90,11 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Wrong credentials")
+    st.error("Incorrect login")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
-    st.warning("Login required")
+    st.warning("Please login")
     st.stop()
 
 username = st.session_state["username"]
@@ -140,22 +107,6 @@ role = config["credentials"]["usernames"][username]["role"]
 st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
-log_event(username, "login")
-
-# =========================================
-# ROLE CONTROL
-# =========================================
-def enforce(role, page):
-
-    rules = {
-        "enumerator": ["Dashboard", "Explorer"],
-        "supervisor": ["Dashboard", "Explorer", "Analytics"],
-        "admin": ["Dashboard", "Explorer", "Analytics", "Downloads"]
-    }
-
-    if page not in rules.get(role, []):
-        st.error("Access denied")
-        st.stop()
 
 # =========================================
 # SIDEBAR INPUT
@@ -170,7 +121,6 @@ page = st.sidebar.radio(
     ["Dashboard", "Explorer", "Analytics", "Downloads"]
 )
 
-enforce(role, page)
 
 # =========================================
 # DATA FETCH (SAFE)
@@ -185,7 +135,7 @@ def fetch_data(uid, token):
 
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    data_all = []
+    results = []
 
     while url:
         try:
@@ -195,15 +145,15 @@ def fetch_data(uid, token):
                 log_error(f"API error {r.status_code}")
                 break
 
-            res = r.json()
-            data_all.extend(res.get("results", []))
-            url = res.get("next")
+            data = r.json()
+            results.extend(data.get("results", []))
+            url = data.get("next")
 
         except Exception as e:
             log_error(e)
             break
 
-    return pd.json_normalize(data_all)
+    return pd.json_normalize(results)
 
 
 df = fetch_data(FORM_UID, KOBO_TOKEN)
@@ -212,21 +162,23 @@ if df.empty:
     st.warning("No data available")
     st.stop()
 
+
 # =========================================
 # COLUMN DETECTION
 # =========================================
-def detect(cols):
-
+def detect(keys):
     for c in df.columns:
-        for k in cols:
+        for k in keys:
             if k in c.lower():
                 return c
     return None
 
 
 DATE_COL = detect(["date", "time", "submission"])
+
 if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
+
 
 # =========================================
 # FILTERS
@@ -248,6 +200,7 @@ if search:
         axis=1
     )]
 
+
 # =========================================
 # QUALITY ENGINE
 # =========================================
@@ -257,8 +210,9 @@ df["anomaly_flag"] = False
 df["ai_flag"] = False
 df["quality_flag"] = False
 
-if len(num_cols) > 0:
 
+# Z-score anomaly
+if len(num_cols) > 0:
     try:
         z = np.abs(
             (df[num_cols] - df[num_cols].mean()) /
@@ -268,21 +222,24 @@ if len(num_cols) > 0:
     except:
         pass
 
-if ENABLE_AI and len(num_cols) > 2:
 
+# AI anomaly
+if ENABLE_AI and len(num_cols) > 2:
     try:
         model = IsolationForest(contamination=AI_CONTAMINATION)
         df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
     except:
         pass
 
-# Missing values rule
+
+# Missing values
 for col in df.columns:
-    missing = df[col].isna() | (df[col].astype(str).str.strip() == "")
-    df.loc[missing, "quality_flag"] = True
+    miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
+    df.loc[miss, "quality_flag"] = True
+
 
 # =========================================
-# FINAL SCORE
+# FINAL SCORING
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
@@ -295,25 +252,24 @@ df["final_flag"] = df["flag_score"] >= 1
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
+
 # =========================================
-# PERSISTENCE (CRITICAL FIX)
+# OPTIONAL PERSISTENCE (SAFE)
 # =========================================
-def save():
+def save_data():
 
     if engine is None:
         return
 
     try:
         df.to_sql("processed_data", engine, if_exists="append", index=False)
-
-        flagged = df[df["final_flag"] == True]
-        flagged.to_sql("flagged_data", engine, if_exists="append", index=False)
-
+        flag_df.to_sql("flagged_data", engine, if_exists="append", index=False)
     except Exception as e:
         log_error(e)
 
 
-save()
+save_data()
+
 
 # =========================================
 # KPI
@@ -323,6 +279,7 @@ valid = len(clean_df)
 bad = len(flag_df)
 
 score = (valid / total) * 100 if total else 0
+
 
 # =========================================
 # UI
@@ -340,20 +297,22 @@ if page == "Dashboard":
 
     st.plotly_chart(px.bar(x=["Valid", "Flagged"], y=[valid, bad]))
 
+
 elif page == "Explorer":
 
     st.subheader("Clean Data")
-    st.dataframe(clean_df)
+    st.dataframe(clean_df, use_container_width=True)
 
     st.subheader("Flagged Data")
-    st.dataframe(flag_df)
+    st.dataframe(flag_df, use_container_width=True)
+
 
 elif page == "Analytics":
 
-    st.subheader("Issue Summary")
+    st.subheader("Quality Breakdown")
 
     summary = pd.DataFrame({
-        "Type": ["Anomaly", "AI", "Missing"],
+        "Issue": ["Anomaly", "AI", "Missing"],
         "Count": [
             df["anomaly_flag"].sum(),
             df["ai_flag"].sum(),
@@ -362,19 +321,21 @@ elif page == "Analytics":
     })
 
     st.dataframe(summary)
-    st.plotly_chart(px.pie(summary, names="Type", values="Count"))
+    st.plotly_chart(px.pie(summary, names="Issue", values="Count"))
+
 
 elif page == "Downloads":
 
-    def to_excel(d):
+    def to_excel(data):
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            d.to_excel(writer, index=False)
+            data.to_excel(writer, index=False)
         buffer.seek(0)
         return buffer
 
     st.download_button("Clean Data", to_excel(clean_df))
     st.download_button("Flagged Data", to_excel(flag_df))
+
 
 # =========================================
 # FOOTER
