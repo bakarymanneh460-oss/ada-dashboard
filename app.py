@@ -1,5 +1,5 @@
 # =========================================
-# REDI ADA SYSTEM — FINAL CALIBRATED VERSION
+# REDI ADA SYSTEM — TRUE FINAL VERSION
 # =========================================
 
 import streamlit as st
@@ -29,19 +29,41 @@ st.set_page_config(page_title="REDI ADA System", layout="wide", page_icon="📊"
 
 APP_NAME = "REDI ADA System"
 ENABLE_AI = True
-AI_CONTAMINATION = 0.015  # calibrated
+AI_CONTAMINATION = 0.015
 
 # =========================================
-# STYLING
+# STYLING (FIXED VISIBILITY)
 # =========================================
 st.markdown("""
 <style>
 .stApp {background: linear-gradient(135deg,#f3f7ff,#dbeafe);}
-[data-testid="stForm"] {background:white;padding:40px;border-radius:18px;box-shadow:0 6px 18px rgba(0,0,0,0.15);}
-button[kind="primary"] {background-color:#1e3a8a !important;color:white !important;border-radius:10px !important;}
-section[data-testid="stSidebar"] {background-color:#1e3a8a !important;}
-section[data-testid="stSidebar"] * {color:white !important;}
-.kpi-card {padding:20px;border-radius:14px;color:white;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,0.2);}
+
+section[data-testid="stSidebar"] {
+    background-color:#1e3a8a !important;
+}
+
+section[data-testid="stSidebar"] * {
+    color:white !important;
+}
+
+/* FIX INPUT VISIBILITY */
+section[data-testid="stSidebar"] input {
+    background:white !important;
+    color:black !important;
+    font-weight:700 !important;
+    border-radius:8px !important;
+}
+
+/* FIX DATE INPUT */
+section[data-testid="stSidebar"] .stDateInput input {
+    color:black !important;
+}
+
+.kpi-card {
+    padding:20px;border-radius:14px;color:white;text-align:center;
+    box-shadow:0 4px 10px rgba(0,0,0,0.2);
+}
+
 .btn-green {background:#16a34a;color:white;padding:12px;border-radius:10px;}
 .btn-red {background:#dc2626;color:white;padding:12px;border-radius:10px;}
 .btn-blue {background:#2563eb;color:white;padding:12px;border-radius:10px;}
@@ -104,9 +126,6 @@ st.sidebar.title("📊 REDI ADA System")
 
 FORM_UID = st.sidebar.text_input("KoBo Form UID")
 
-if FORM_UID and len(FORM_UID) < 10:
-    st.sidebar.error("Invalid UID format")
-
 pages = ["Dashboard","Explorer","Quality Analytics","Downloads"]
 
 if role == "enumerator":
@@ -148,17 +167,8 @@ with st.spinner("Fetching data..."):
     df = fetch(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
-    if os.path.exists("backup.csv"):
-        df = pd.read_csv("backup.csv")
-        st.warning("Offline mode")
-    else:
-        st.warning("No data found")
-        st.stop()
-
-df.to_csv("backup.csv", index=False)
-
-st.sidebar.success("API Connected")
-st.sidebar.info(f"Records: {len(df)}")
+    st.warning("No data found")
+    st.stop()
 
 # =========================================
 # DATE FILTER
@@ -193,12 +203,11 @@ if DATE_COL:
 num_cols = df.select_dtypes(include=["number"]).columns
 
 # =========================================
-# STAT ANOMALY (CALIBRATED)
+# STAT ANOMALY
 # =========================================
 if len(num_cols)>0:
     std = df[num_cols].std().replace(0,1)
     z = np.abs((df[num_cols]-df[num_cols].mean())/std)
-
     df["anomaly_flag"] = (z > 3).sum(axis=1) > 2
 else:
     df["anomaly_flag"] = False
@@ -213,12 +222,11 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE (CALIBRATED)
+# QUALITATIVE
 # =========================================
 df["qualitative_flag"] = False
 df["qualitative_issue"] = ""
 
-# strict required fields (only exact matches)
 required_exact = ["name","age","gender","region"]
 
 for col in df.columns:
@@ -227,15 +235,6 @@ for col in df.columns:
         df.loc[mask,"qualitative_flag"] = True
         df.loc[mask,"qualitative_issue"] += f"Missing {col}; "
 
-# age validation
-age_col = detect(["age"])
-if age_col:
-    age = pd.to_numeric(df[age_col], errors="coerce")
-    mask = (age < 0) | (age > 120)
-    df.loc[mask,"qualitative_flag"] = True
-    df.loc[mask,"qualitative_issue"] += "Invalid age; "
-
-# text garbage (safe)
 bad = ["asdf","test","xxx","n/a","unknown"]
 
 for col in df.select_dtypes(include="object"):
@@ -244,27 +243,37 @@ for col in df.select_dtypes(include="object"):
     df.loc[mask,"qualitative_issue"] += f"Bad text {col}; "
 
 # =========================================
-# FINAL FLAGS (SMART)
+# FINAL FLAG LOGIC (FIXED)
 # =========================================
-df["flag_score"] = (
-    df["anomaly_flag"].astype(int) +
-    df["ai_flag"].astype(int) +
-    df["qualitative_flag"].astype(int)
+df["final_flag"] = (
+    df["qualitative_flag"] |
+    (df["anomaly_flag"] & df["ai_flag"])
 )
 
-df["final_flag"] = df["flag_score"] >= 2  # calibrated
-
 # =========================================
-# AI EXPLANATION
+# WHY FLAGGED ENGINE
 # =========================================
-def explain(r):
-    out=[]
-    if r["anomaly_flag"]: out.append("Stat anomaly")
-    if r["ai_flag"]: out.append("AI anomaly")
-    if r["qualitative_flag"]: out.append(r["qualitative_issue"])
-    return " | ".join(out)
+def explain_row(r):
+    reasons = []
 
-df["ai_explain"] = df.apply(explain, axis=1)
+    if r["qualitative_flag"]:
+        reasons.append(f"Data issue: {r['qualitative_issue']}")
+
+    if r["anomaly_flag"]:
+        reasons.append("Unusual numeric pattern detected")
+
+    if r["ai_flag"]:
+        reasons.append("AI anomaly detected")
+
+    if r["anomaly_flag"] and r["ai_flag"]:
+        reasons.append("Strong anomaly (AI + statistical)")
+
+    if not reasons:
+        return "No issues"
+
+    return " | ".join(reasons)
+
+df["why_flagged"] = df.apply(explain_row, axis=1)
 
 # =========================================
 # SPLIT
@@ -300,19 +309,35 @@ if page=="Dashboard":
 # =========================================
 elif page=="Explorer":
     t1,t2 = st.tabs(["Clean","Flagged"])
-    with t1: st.dataframe(clean,use_container_width=True)
-    with t2: st.dataframe(flag,use_container_width=True)
+
+    with t1:
+        st.dataframe(clean, use_container_width=True)
+
+    with t2:
+        st.subheader("⚠️ Flagged Records (with Reasons)")
+
+        cols = list(flag.columns)
+        if "why_flagged" in cols:
+            cols.insert(0, cols.pop(cols.index("why_flagged")))
+
+        st.dataframe(flag[cols], use_container_width=True)
 
 # =========================================
-# QUALITY
+# QUALITY ANALYTICS (RENAMED)
 # =========================================
 elif page=="Quality Analytics":
+
     summary = pd.DataFrame({
-        "Issue":["Stat","AI","Qualitative"],
-        "Count":[df["anomaly_flag"].sum(),df["ai_flag"].sum(),df["qualitative_flag"].sum()]
+        "Category": ["Quantitative","Qualitative"],
+        "Count": [
+            int(df["anomaly_flag"].sum() + df["ai_flag"].sum()),
+            int(df["qualitative_flag"].sum())
+        ]
     })
+
     st.dataframe(summary)
-    st.plotly_chart(px.pie(summary,names="Issue",values="Count"))
+
+    st.plotly_chart(px.pie(summary,names="Category",values="Count"))
 
 # =========================================
 # DOWNLOADS
@@ -328,58 +353,16 @@ elif page=="Downloads":
         o.seek(0)
         return o
 
-    def full_excel():
-        o=io.BytesIO()
-        with pd.ExcelWriter(o,engine="openpyxl") as w:
-            clean.to_excel(w,index=False,sheet_name="Clean")
-            flag.to_excel(w,index=False,sheet_name="Flagged")
-        o.seek(0)
-        return o
-
-    def pdf():
-        b=io.BytesIO()
-        doc=SimpleDocTemplate(b)
-        styles=getSampleStyleSheet()
-
-        elems=[Paragraph("REDI Data Quality Report",styles["Title"]),Spacer(1,12)]
-
-        t=Table([
-            ["Metric","Value"],
-            ["Total",total],
-            ["Valid",valid],
-            ["Flagged",bad],
-            ["Score",f"{score:.2f}%"]
-        ])
-
-        t.setStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.grey),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.whitesmoke),
-            ("GRID",(0,0),(-1,-1),1,colors.black)
-        ])
-
-        elems.append(t)
-        doc.build(elems)
-
-        b.seek(0)
-        return b
-
-    c1,c2,c3,c4 = st.columns(4)
+    c1,c2,c3 = st.columns(3)
 
     with c1:
-        st.markdown('<div class="btn-blue">📊 Full Dataset Export</div>',unsafe_allow_html=True)
-        st.download_button("Download Full Excel",full_excel(),"redi_full.xlsx")
-
-    with c2:
-        st.markdown('<div class="btn-green">✅ Clean Data Export</div>',unsafe_allow_html=True)
         st.download_button("Download Clean",to_excel(clean),"clean.xlsx")
 
-    with c3:
-        st.markdown('<div class="btn-red">⚠️ Flagged Data Export</div>',unsafe_allow_html=True)
+    with c2:
         st.download_button("Download Flagged",to_excel(flag),"flagged.xlsx")
 
-    with c4:
-        st.markdown('<div class="btn-purple">📄 PDF Report</div>',unsafe_allow_html=True)
-        st.download_button("Download PDF",pdf(),"redi_report.pdf")
+    with c3:
+        st.download_button("Download Full",to_excel(df),"full.xlsx")
 
 # =========================================
 # FOOTER
