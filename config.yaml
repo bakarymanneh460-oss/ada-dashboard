@@ -3,22 +3,17 @@ credentials:
     admin:
       email: admin@redi.com
       name: Admin User
-      password: $2b$12$KIXQexamplehashedpassword
+      password: <PASTE_HASH_1>
       role: admin
 
     supervisor:
       email: sup@redi.com
       name: Supervisor
-      password: $2b$12$KIXQexamplehashedpassword
+      password: <PASTE_HASH_2>
       role: supervisor
 
     enumerator:
       email: enum@redi.com
       name: Enumerator
-      password: $2b$12$KIXQexamplehashedpassword
+      password: <PASTE_HASH_3>
       role: enumerator
-
-cookie:
-  expiry_days: 1
-  key: redi_secure_key
-  name: redi_cookie
