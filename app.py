@@ -30,17 +30,18 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 import plotly.express as px
 
+
 # =========================================
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
-    page_title="REDI Automated Data Quality Monitoring System",
+    page_title="REDI Data Quality System",
     layout="wide",
     page_icon="📊"
 )
 
 # =========================================
-# STYLING
+# BASIC STYLE
 # =========================================
 st.markdown("""
 <style>
@@ -53,7 +54,7 @@ st.markdown("""
 # =========================================
 # CONFIG
 # =========================================
-APP_NAME = os.getenv("APP_NAME", "REDI Automated Data Quality Monitoring System")
+APP_NAME = "REDI Data Quality Monitoring System"
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
 
@@ -61,7 +62,6 @@ AI_CONTAMINATION = 0.005
 # LOGGING
 # =========================================
 os.makedirs("logs", exist_ok=True)
-
 logging.basicConfig(
     filename="logs/redi.log",
     level=logging.ERROR,
@@ -69,7 +69,7 @@ logging.basicConfig(
 )
 
 # =========================================
-# AUTH
+# AUTH (SAFE LOAD)
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -113,7 +113,6 @@ page = st.sidebar.radio("Navigation", [
     "Downloads"
 ])
 
-# Calibration Mode
 CALIBRATION = st.sidebar.checkbox("🧪 Calibration Mode")
 
 # =========================================
@@ -133,16 +132,18 @@ def fetch_data(uid, token):
 
     while url:
         r = requests.get(url, headers=headers, timeout=30)
+
         if r.status_code != 200:
             break
+
         data = r.json()
         all_data.extend(data.get("results", []))
         url = data.get("next")
 
     return pd.json_normalize(all_data)
 
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
+KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 df = fetch_data(FORM_UID, KOBO_TOKEN)
 
 if df.empty:
@@ -159,7 +160,7 @@ def detect(names):
                 return col
     return None
 
-DATE_COL = detect(["submission_time","date","time"])
+DATE_COL = detect(["submission_time", "date", "time"])
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
@@ -167,11 +168,10 @@ if DATE_COL:
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
 # =========================================
-# NUMERIC + AI
+# NUMERIC + AI ANOMALY
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
-# Z-score anomaly
 if len(num_cols) > 0:
     std = df[num_cols].std().replace(0, 1)
     z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
@@ -179,7 +179,6 @@ if len(num_cols) > 0:
 else:
     df["anomaly_flag"] = False
 
-# AI anomaly
 if ENABLE_AI and len(num_cols) > 2:
     model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
     df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
@@ -187,27 +186,27 @@ else:
     df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE ENGINE (UPGRADED)
+# QUALITATIVE ENGINE (FIXED)
 # =========================================
-df["qualitative_score"] = 0
+df["qualitative_score"] = 0.0
 df["qualitative_warning"] = ""
 
-required_keywords = ["name","gender","age","region","district"]
+required_keywords = ["name", "gender", "age", "region", "district"]
 required_cols = [c for c in df.columns if any(k in c.lower() for k in required_keywords)]
 
 for col in required_cols:
     missing = df[col].isna() | (df[col].astype(str).str.strip() == "")
-    df.loc[missing, "qualitative_score"] += 2
+    df.loc[missing, "qualitative_score"] = df.loc[missing, "qualitative_score"] + 2
     df.loc[missing, "qualitative_warning"] += f"Missing {col}; "
 
 text_cols = df.select_dtypes(include=["object"]).columns
 
-invalid_patterns = ["asdf","test","xxx","na","n/a","unknown"]
+invalid_patterns = ["asdf", "test", "xxx", "na", "n/a", "unknown"]
 
 for col in text_cols:
     mask = df[col].astype(str).str.lower().isin(invalid_patterns)
-    df.loc[mask, "qualitative_score"] += 1
-    df.loc[mask, "qualitative_warning"] += f"Invalid text in {col}; "
+    df.loc[mask, "qualitative_score"] = df.loc[mask, "qualitative_score"] + 1
+    df.loc[mask, "qualitative_warning"] += f"Invalid text {col}; "
 
 common_errors = {
     "teh":"the","recieve":"receive","adress":"address",
@@ -218,13 +217,13 @@ for col in text_cols:
     lower = df[col].astype(str).str.lower()
     for w, c in common_errors.items():
         mask = lower.str.contains(w, na=False)
-        df.loc[mask, "qualitative_score"] += 0.5
+        df.loc[mask, "qualitative_score"] = df.loc[mask, "qualitative_score"] + 0.5
         df.loc[mask, "qualitative_warning"] += f"{w}->{c}; "
 
 df["qualitative_flag"] = df["qualitative_score"] >= 3
 
 # =========================================
-# RISK SCORE SYSTEM
+# RISK ENGINE
 # =========================================
 df["risk_score"] = (
     df["anomaly_flag"].astype(int) * 3 +
@@ -232,7 +231,7 @@ df["risk_score"] = (
     df["qualitative_score"]
 )
 
-def risk_level(x):
+def risk(x):
     if x >= 6:
         return "High Risk"
     elif x >= 3:
@@ -241,7 +240,7 @@ def risk_level(x):
         return "Low Risk"
     return "Clean"
 
-df["risk_level"] = df["risk_score"].apply(risk_level)
+df["risk_level"] = df["risk_score"].apply(risk)
 
 clean_df = df[df["risk_level"] == "Clean"]
 flag_df = df[df["risk_level"] != "Clean"]
@@ -262,14 +261,12 @@ if page == "Dashboard":
 
     st.title(APP_NAME)
 
-    c1,c2,c3,c4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric("Total", total)
     c2.metric("Valid", valid)
     c3.metric("Flagged", bad)
     c4.metric("Quality %", f"{score:.1f}")
-
-    st.subheader("Risk Distribution")
 
     st.plotly_chart(
         px.histogram(df, x="risk_level", color="risk_level"),
@@ -281,7 +278,9 @@ if page == "Dashboard":
 # =========================================
 elif page == "Explorer":
 
-    tab1, tab2 = st.tabs(["Clean","Flagged"])
+    st.title("Data Explorer")
+
+    tab1, tab2 = st.tabs(["Clean", "Flagged"])
 
     with tab1:
         st.dataframe(clean_df)
@@ -301,8 +300,10 @@ elif page == "Quality Analytics":
     st.metric("Qualitative Score", df["qualitative_score"].sum())
 
     st.plotly_chart(
-        px.pie(names=df["risk_level"].value_counts().index,
-               values=df["risk_level"].value_counts().values),
+        px.pie(
+            names=df["risk_level"].value_counts().index,
+            values=df["risk_level"].value_counts().values
+        ),
         use_container_width=True
     )
 
@@ -313,10 +314,10 @@ elif page == "Downloads":
 
     st.title("Downloads")
 
-    def to_excel(d):
+    def to_excel(data):
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as w:
-            d.to_excel(w, index=False)
+            data.to_excel(w, index=False)
         return out.getvalue()
 
     st.download_button("Full Data", to_excel(df), "full.xlsx")
