@@ -2,11 +2,10 @@ streamlit
 pandas
 numpy
 requests
-pyyaml
-streamlit-authenticator
 scikit-learn
 plotly
-openpyxl
+pyyaml
+streamlit-authenticator
 reportlab
-sqlalchemy
-psycopg2-binary
+python-docx
+pyspellchecker
