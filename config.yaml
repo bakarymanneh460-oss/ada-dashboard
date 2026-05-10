@@ -8,13 +8,13 @@ credentials:
 
     supervisor:
       email: sup@redi.com
-      name: Supervisor User
+      name: Supervisor
       password: sup123
       role: supervisor
 
     enumerator:
       email: enum@redi.com
-      name: Enumerator User
+      name: Enumerator
       password: enum123
       role: enumerator
 
