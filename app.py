@@ -1,6 +1,6 @@
 # =========================================
 # REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
-# FINAL UPGRADED PRODUCTION VERSION
+# FINAL PRODUCTION STABLE VERSION
 # =========================================
 
 import streamlit as st
@@ -30,31 +30,20 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 import plotly.express as px
 
-
 # =========================================
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
-    page_title="REDI Data Quality System",
+    page_title="REDI Automated Data Quality Monitoring System",
     layout="wide",
     page_icon="📊"
 )
 
 # =========================================
-# BASIC STYLE
-# =========================================
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(135deg,#f3f7ff,#dbeafe);
-}
-</style>
-""", unsafe_allow_html=True)
-
-# =========================================
 # CONFIG
 # =========================================
-APP_NAME = "REDI Data Quality Monitoring System"
+APP_NAME = "REDI Automated Data Quality Monitoring System"
+
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
 
@@ -62,6 +51,7 @@ AI_CONTAMINATION = 0.005
 # LOGGING
 # =========================================
 os.makedirs("logs", exist_ok=True)
+
 logging.basicConfig(
     filename="logs/redi.log",
     level=logging.ERROR,
@@ -69,184 +59,181 @@ logging.basicConfig(
 )
 
 # =========================================
-# AUTH (SAFE LOAD)
+# FETCH DATA
 # =========================================
-with open("config.yaml") as file:
-    config = yaml.load(file, Loader=SafeLoader)
+@st.cache_data(ttl=120)
+def fetch_data(uid):
+    if not uid:
+        return pd.DataFrame()
 
-authenticator = stauth.Authenticate(
-    config["credentials"],
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"]
-)
+    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-authenticator.login()
+    try:
+        r = requests.get(url, timeout=30)
 
-name = st.session_state.get("name")
-authentication_status = st.session_state.get("authentication_status")
-username = st.session_state.get("username")
+        if r.status_code != 200:
+            return pd.DataFrame()
 
-if authentication_status is False:
-    st.error("Incorrect username or password")
-    st.stop()
+        data = r.json().get("results", [])
+        return pd.json_normalize(data)
 
-if authentication_status is None:
-    st.warning("Please login")
-    st.stop()
-
-authenticator.logout("Logout", "sidebar")
-
-role = config["credentials"]["usernames"][username]["role"]
+    except Exception as e:
+        logging.error(str(e))
+        return pd.DataFrame()
 
 # =========================================
 # SIDEBAR
 # =========================================
 st.sidebar.title("REDI System")
 
-FORM_UID = st.sidebar.text_input("Kobo Form UID")
-
-page = st.sidebar.radio("Navigation", [
-    "Dashboard",
-    "Explorer",
-    "Quality Analytics",
-    "Downloads"
-])
-
-CALIBRATION = st.sidebar.checkbox("🧪 Calibration Mode")
+FORM_UID = st.sidebar.text_input("Kobo UID")
 
 # =========================================
-# FETCH DATA
+# LOAD DATA
 # =========================================
-@st.cache_data(ttl=120)
-def fetch_data(uid, token):
-
-    if not uid:
-        return pd.DataFrame()
-
-    headers = {"Authorization": f"Token {token}"} if token else {}
-
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
-
-    all_data = []
-
-    while url:
-        r = requests.get(url, headers=headers, timeout=30)
-
-        if r.status_code != 200:
-            break
-
-        data = r.json()
-        all_data.extend(data.get("results", []))
-        url = data.get("next")
-
-    return pd.json_normalize(all_data)
-
-
-KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
-df = fetch_data(FORM_UID, KOBO_TOKEN)
+df = fetch_data(FORM_UID)
 
 if df.empty:
     st.warning("No data found")
     st.stop()
 
 # =========================================
-# COLUMN DETECTION
+# SAFE INITIALIZATION (CRITICAL FIX)
 # =========================================
-def detect(names):
-    for col in df.columns:
-        for n in names:
-            if n in col.lower():
-                return col
-    return None
-
-DATE_COL = detect(["submission_time", "date", "time"])
-if "_submission_time" in df.columns:
-    DATE_COL = "_submission_time"
-
-if DATE_COL:
-    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
+df["qualitative_flag"] = False
+df["qualitative_issue"] = ""
+df["qualitative_score"] = 0.0   # FIX: prevents TypeError crash
 
 # =========================================
-# NUMERIC + AI ANOMALY
+# NUMERIC HANDLING
 # =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
+df["anomaly_flag"] = False
+df["ai_flag"] = False
+
 if len(num_cols) > 0:
+
     std = df[num_cols].std().replace(0, 1)
     z = np.abs((df[num_cols] - df[num_cols].mean()) / std)
-    df["anomaly_flag"] = z.max(axis=1) > 4.5
-else:
-    df["anomaly_flag"] = False
 
+    df["anomaly_flag"] = (z.max(axis=1) > 4.5)
+
+# =========================================
+# AI ANOMALY DETECTION
+# =========================================
 if ENABLE_AI and len(num_cols) > 2:
-    model = IsolationForest(contamination=AI_CONTAMINATION, random_state=42)
-    df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0)) == -1
-else:
-    df["ai_flag"] = False
+
+    try:
+        model = IsolationForest(
+            contamination=AI_CONTAMINATION,
+            random_state=42
+        )
+
+        ai_df = df[num_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+        pred = model.fit_predict(ai_df)
+        df["ai_flag"] = (pred == -1)
+
+    except Exception as e:
+        logging.error(str(e))
+        df["ai_flag"] = False
 
 # =========================================
-# QUALITATIVE ENGINE (FIXED)
+# QUALITATIVE ENGINE (STABLE)
 # =========================================
-df["qualitative_score"] = 0.0
-df["qualitative_warning"] = ""
-
-required_keywords = ["name", "gender", "age", "region", "district"]
-required_cols = [c for c in df.columns if any(k in c.lower() for k in required_keywords)]
-
-for col in required_cols:
-    missing = df[col].isna() | (df[col].astype(str).str.strip() == "")
-    df.loc[missing, "qualitative_score"] = df.loc[missing, "qualitative_score"] + 2
-    df.loc[missing, "qualitative_warning"] += f"Missing {col}; "
 
 text_cols = df.select_dtypes(include=["object"]).columns
 
-invalid_patterns = ["asdf", "test", "xxx", "na", "n/a", "unknown"]
+# -----------------------------------------
+# Soft noise handling (NOT hard flags)
+# -----------------------------------------
+soft_noise = ["test", "unknown", "n/a", "na", "xxx"]
 
 for col in text_cols:
-    mask = df[col].astype(str).str.lower().isin(invalid_patterns)
-    df.loc[mask, "qualitative_score"] = df.loc[mask, "qualitative_score"] + 1
-    df.loc[mask, "qualitative_warning"] += f"Invalid text {col}; "
 
+    lower = df[col].astype(str).str.lower()
+
+    for val in soft_noise:
+
+        mask = lower.str.contains(val, na=False)
+
+        df.loc[mask, "qualitative_score"] = (
+            df.loc[mask, "qualitative_score"].fillna(0) + 0.3
+        )
+
+        df.loc[mask, "qualitative_issue"] = (
+            df.loc[mask, "qualitative_issue"].fillna("") +
+            f"Soft noise ({val}) in {col}; "
+        )
+
+# -----------------------------------------
+# REQUIRED FIELDS
+# -----------------------------------------
+required_keywords = ["name", "gender", "age", "region", "district"]
+
+for col in df.columns:
+
+    for key in required_keywords:
+
+        if key in col.lower():
+
+            mask = df[col].isna() | (df[col].astype(str).str.strip() == "")
+
+            df.loc[mask, "qualitative_flag"] = True
+
+            df.loc[mask, "qualitative_score"] += 1.0
+
+            df.loc[mask, "qualitative_issue"] = (
+                df.loc[mask, "qualitative_issue"].fillna("") +
+                f"Missing {col}; "
+            )
+
+# -----------------------------------------
+# SPELLING CHECK (LOW WEIGHT)
+# -----------------------------------------
 common_errors = {
-    "teh":"the","recieve":"receive","adress":"address",
-    "tdak":"tidak","sya":"saya","rumh":"rumah"
+    "teh": "the",
+    "recieve": "receive",
+    "adress": "address",
+    "tdak": "tidak",
+    "sya": "saya"
 }
 
 for col in text_cols:
+
     lower = df[col].astype(str).str.lower()
-    for w, c in common_errors.items():
-        mask = lower.str.contains(w, na=False)
-        df.loc[mask, "qualitative_score"] = df.loc[mask, "qualitative_score"] + 0.5
-        df.loc[mask, "qualitative_warning"] += f"{w}->{c}; "
 
-df["qualitative_flag"] = df["qualitative_score"] >= 3
+    for wrong, correct in common_errors.items():
+
+        mask = lower.str.contains(wrong, na=False)
+
+        df.loc[mask, "qualitative_score"] += 0.2
+
+        df.loc[mask, "qualitative_issue"] = (
+            df.loc[mask, "qualitative_issue"].fillna("") +
+            f"Spelling {wrong}->{correct}; "
+        )
 
 # =========================================
-# RISK ENGINE
+# FINAL FLAGS (STABLE)
 # =========================================
-df["risk_score"] = (
-    df["anomaly_flag"].astype(int) * 3 +
-    df["ai_flag"].astype(int) * 4 +
-    df["qualitative_score"]
+df["flag_score"] = (
+    df["anomaly_flag"].fillna(False).astype(int) +
+    df["ai_flag"].fillna(False).astype(int) +
+    (df["qualitative_score"] > 1).astype(int)
 )
 
-def risk(x):
-    if x >= 6:
-        return "High Risk"
-    elif x >= 3:
-        return "Medium Risk"
-    elif x > 0:
-        return "Low Risk"
-    return "Clean"
-
-df["risk_level"] = df["risk_score"].apply(risk)
-
-clean_df = df[df["risk_level"] == "Clean"]
-flag_df = df[df["risk_level"] != "Clean"]
+df["final_flag"] = df["flag_score"] >= 1
 
 # =========================================
-# KPI
+# SPLIT DATA
+# =========================================
+clean_df = df[~df["final_flag"]]
+flag_df = df[df["final_flag"]]
+
+# =========================================
+# KPIs
 # =========================================
 total = len(df)
 valid = len(clean_df)
@@ -257,87 +244,47 @@ score = (valid / total * 100) if total else 0
 # =========================================
 # DASHBOARD
 # =========================================
-if page == "Dashboard":
+st.title(APP_NAME)
 
-    st.title(APP_NAME)
+c1, c2, c3 = st.columns(3)
 
-    c1, c2, c3, c4 = st.columns(4)
+c1.metric("Total Records", total)
+c2.metric("Valid Records", valid)
+c3.metric("Flagged Records", bad)
 
-    c1.metric("Total", total)
-    c2.metric("Valid", valid)
-    c3.metric("Flagged", bad)
-    c4.metric("Quality %", f"{score:.1f}")
+st.metric("Quality Score", f"{score:.2f}%")
 
-    st.plotly_chart(
-        px.histogram(df, x="risk_level", color="risk_level"),
-        use_container_width=True
-    )
+# =========================================
+# BREAKDOWN
+# =========================================
+st.subheader("Quality Breakdown")
+
+breakdown = pd.DataFrame({
+    "Type": ["Rule Issues", "AI Issues", "Data Noise"],
+    "Count": [
+        df["anomaly_flag"].sum(),
+        df["ai_flag"].sum(),
+        (df["qualitative_score"] > 1).sum()
+    ]
+})
+
+st.dataframe(breakdown)
+
+fig = px.bar(breakdown, x="Type", y="Count")
+st.plotly_chart(fig, use_container_width=True)
 
 # =========================================
 # EXPLORER
 # =========================================
-elif page == "Explorer":
+st.subheader("Explorer")
 
-    st.title("Data Explorer")
+tab1, tab2 = st.tabs(["Clean", "Flagged"])
 
-    tab1, tab2 = st.tabs(["Clean", "Flagged"])
+with tab1:
+    st.dataframe(clean_df, use_container_width=True)
 
-    with tab1:
-        st.dataframe(clean_df)
-
-    with tab2:
-        st.dataframe(flag_df)
-
-# =========================================
-# ANALYTICS
-# =========================================
-elif page == "Quality Analytics":
-
-    st.title("Quality Analytics")
-
-    st.metric("AI Outliers", df["ai_flag"].sum())
-    st.metric("Rule Anomalies", df["anomaly_flag"].sum())
-    st.metric("Qualitative Score", df["qualitative_score"].sum())
-
-    st.plotly_chart(
-        px.pie(
-            names=df["risk_level"].value_counts().index,
-            values=df["risk_level"].value_counts().values
-        ),
-        use_container_width=True
-    )
-
-# =========================================
-# DOWNLOADS
-# =========================================
-elif page == "Downloads":
-
-    st.title("Downloads")
-
-    def to_excel(data):
-        out = io.BytesIO()
-        with pd.ExcelWriter(out, engine="openpyxl") as w:
-            data.to_excel(w, index=False)
-        return out.getvalue()
-
-    st.download_button("Full Data", to_excel(df), "full.xlsx")
-    st.download_button("Clean Data", to_excel(clean_df), "clean.xlsx")
-    st.download_button("Flagged Data", to_excel(flag_df), "flagged.xlsx")
-
-# =========================================
-# CALIBRATION MODE
-# =========================================
-if CALIBRATION:
-
-    st.subheader("Calibration Sample (50 rows)")
-
-    sample = df.sample(min(50, len(df)))
-
-    st.dataframe(sample[[
-        "risk_score",
-        "risk_level",
-        "qualitative_warning"
-    ]])
+with tab2:
+    st.dataframe(flag_df, use_container_width=True)
 
 # =========================================
 # FOOTER
