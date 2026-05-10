@@ -1,6 +1,6 @@
 # =========================================
-# REDI DATA QUALITY MONITORING SYSTEM
-# FINAL DEPLOYMENT READY APP
+# REDI MULTI-FORM DATA QUALITY SYSTEM
+# FINAL ENTERPRISE-READY STREAMLIT APP
 # =========================================
 
 import streamlit as st
@@ -22,12 +22,12 @@ import plotly.express as px
 # PAGE CONFIG
 # =========================================
 st.set_page_config(
-    page_title="REDI Data Quality System",
+    page_title="REDI Multi-Form System",
     layout="wide",
     page_icon="📊"
 )
 
-APP_NAME = "REDI Automated Data Quality Monitoring System"
+APP_NAME = "REDI Multi-Form Data Quality System"
 
 ENABLE_AI = True
 AI_CONTAMINATION = 0.005
@@ -47,7 +47,7 @@ def log_error(e):
     logging.error(str(e))
 
 # =========================================
-# AUTHENTICATION
+# AUTH
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -64,7 +64,7 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Invalid username or password")
+    st.error("Invalid login")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
@@ -82,12 +82,19 @@ st.sidebar.success(f"Welcome {name}")
 st.sidebar.info(f"Role: {role}")
 
 # =========================================
-# SIDEBAR INPUT
+# MULTI-FORM INPUT
 # =========================================
 st.sidebar.title("REDI System")
 
-FORM_UID = st.sidebar.text_input("Kobo Form UID")
+uid_input = st.sidebar.text_area("Enter Kobo UIDs (one per line)")
+
+load_btn = st.sidebar.button("Load Forms")
+
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
+
+headers = {
+    "Authorization": f"Token {KOBO_TOKEN}"
+} if KOBO_TOKEN else {}
 
 page = st.sidebar.radio(
     "Navigation",
@@ -95,83 +102,83 @@ page = st.sidebar.radio(
 )
 
 # =========================================
-# DATA FETCH (ROBUST + SAFE)
+# SESSION STORAGE
 # =========================================
-@st.cache_data(ttl=120)
-def fetch_data(uid, token):
+if "datasets" not in st.session_state:
+    st.session_state.datasets = {}
 
-    if not uid:
-        return pd.DataFrame()
+# =========================================
+# UNIVERSAL KOBO FETCH
+# =========================================
+def fetch_form(uid):
 
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
+    base_urls = [
+        "https://kf.kobotoolbox.org",
+        "https://eu.kobotoolbox.org"
+    ]
 
-    headers = {
-        "Authorization": f"Token {token}"
-    } if token else {}
+    for base in base_urls:
 
-    results = []
+        url = f"{base}/api/v2/assets/{uid}/data/?format=json&page_size=1000"
 
-    while url:
+        rows = []
+
         try:
-            r = requests.get(url, headers=headers, timeout=30)
+            while url:
 
-            if r.status_code != 200:
-                st.error(f"Kobo API Error: {r.status_code}")
-                st.stop()
+                r = requests.get(url, headers=headers, timeout=30)
 
-            data = r.json()
+                if r.status_code != 200:
+                    break
 
-            results.extend(data.get("results", []))
-            url = data.get("next")
+                data = r.json()
+
+                if "results" in data:
+                    rows.extend(data["results"])
+
+                url = data.get("next")
+
+            if rows:
+                df = pd.json_normalize(rows)
+                df["__form_id"] = uid
+                df["__loaded_at"] = datetime.now()
+                return df
 
         except Exception as e:
-            st.error(f"Connection error: {e}")
-            st.stop()
+            log_error(e)
+            continue
 
-    return pd.json_normalize(results)
+    return pd.DataFrame()
 
+# =========================================
+# LOAD FORMS
+# =========================================
+if load_btn and uid_input:
 
-df = fetch_data(FORM_UID, KOBO_TOKEN)
+    uids = [u.strip() for u in uid_input.splitlines() if u.strip()]
+
+    for uid in uids:
+
+        with st.spinner(f"Loading {uid}"):
+
+            df = fetch_form(uid)
+
+            if not df.empty:
+                st.session_state.datasets[uid] = df
+
+    st.success(f"Loaded {len(st.session_state.datasets)} forms")
+
+# =========================================
+# COMBINE DATASETS
+# =========================================
+if st.session_state.datasets:
+    df = pd.concat(st.session_state.datasets.values(), ignore_index=True)
+else:
+    df = pd.DataFrame()
 
 if df.empty:
-    st.warning("No data found for this form")
+    st.warning("No data loaded")
     st.stop()
-
-# =========================================
-# COLUMN DETECTION
-# =========================================
-def detect(keys):
-    for c in df.columns:
-        for k in keys:
-            if k in c.lower():
-                return c
-    return None
-
-
-DATE_COL = detect(["date", "time", "submission"])
-
-if DATE_COL:
-    df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
-
-# =========================================
-# FILTERS
-# =========================================
-st.sidebar.subheader("Filters")
-
-if DATE_COL:
-    start = st.sidebar.date_input("Start", df[DATE_COL].min())
-    end = st.sidebar.date_input("End", df[DATE_COL].max())
-
-    df = df[(df[DATE_COL] >= pd.to_datetime(start)) &
-            (df[DATE_COL] <= pd.to_datetime(end))]
-
-search = st.sidebar.text_input("Search")
-
-if search:
-    df = df[df.astype(str).apply(
-        lambda x: x.str.contains(search, case=False, na=False).any(),
-        axis=1
-    )]
 
 # =========================================
 # QUALITY ENGINE
@@ -180,20 +187,17 @@ num_cols = df.select_dtypes(include=["number"]).columns
 
 df["anomaly_flag"] = False
 df["ai_flag"] = False
-df["quality_flag"] = False
+df["missing_flag"] = False
 
-# Z-score anomaly detection
+# Z-score anomaly
 if len(num_cols) > 0:
-    try:
-        z = np.abs(
-            (df[num_cols] - df[num_cols].mean()) /
-            df[num_cols].std().replace(0, 1)
-        )
-        df["anomaly_flag"] = z.max(axis=1) > 4.5
-    except Exception as e:
-        log_error(e)
+    z = np.abs(
+        (df[num_cols] - df[num_cols].mean()) /
+        df[num_cols].std().replace(0, 1)
+    )
+    df["anomaly_flag"] = z.max(axis=1) > 4.5
 
-# AI anomaly detection
+# AI anomaly
 if ENABLE_AI and len(num_cols) > 2:
     try:
         model = IsolationForest(contamination=AI_CONTAMINATION)
@@ -201,18 +205,16 @@ if ENABLE_AI and len(num_cols) > 2:
     except Exception as e:
         log_error(e)
 
-# Missing values detection
-for col in df.columns:
-    miss = df[col].isna() | (df[col].astype(str).str.strip() == "")
-    df.loc[miss, "quality_flag"] = True
+# Missing values
+df["missing_flag"] = df.isna().any(axis=1)
 
 # =========================================
-# FINAL FLAGS
+# FINAL SCORING
 # =========================================
 df["flag_score"] = (
     df["anomaly_flag"].astype(int) +
     df["ai_flag"].astype(int) +
-    df["quality_flag"].astype(int)
+    df["missing_flag"].astype(int)
 )
 
 df["final_flag"] = df["flag_score"] >= 1
@@ -221,7 +223,7 @@ clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
 # =========================================
-# KPI METRICS
+# KPI
 # =========================================
 total = len(df)
 valid = len(clean_df)
@@ -244,6 +246,19 @@ if page == "Dashboard":
     c4.metric("Quality Score", f"{score:.2f}%")
 
     st.plotly_chart(px.bar(x=["Valid", "Flagged"], y=[valid, bad]))
+
+
+    st.subheader("Form Breakdown")
+
+    breakdown = pd.DataFrame([
+        {
+            "Form": uid,
+            "Records": len(data)
+        }
+        for uid, data in st.session_state.datasets.items()
+    ])
+
+    st.dataframe(breakdown)
 
 
 # =========================================
@@ -270,7 +285,7 @@ elif page == "Analytics":
         "Count": [
             df["anomaly_flag"].sum(),
             df["ai_flag"].sum(),
-            df["quality_flag"].sum()
+            df["missing_flag"].sum()
         ]
     })
 
@@ -290,8 +305,8 @@ elif page == "Downloads":
         buffer.seek(0)
         return buffer
 
-    st.download_button("Download Clean Data", to_excel(clean_df))
-    st.download_button("Download Flagged Data", to_excel(flag_df))
+    st.download_button("Download Clean", to_excel(clean_df))
+    st.download_button("Download Flagged", to_excel(flag_df))
 
 
 # =========================================
