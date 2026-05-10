@@ -1,6 +1,6 @@
 # =========================================
 # REDI DATA QUALITY MONITORING SYSTEM
-# FINAL PRODUCTION VERSION (ENHANCED)
+# NO-FAIL EXAM / DEMO VERSION (STREAMLIT SAFE)
 # =========================================
 
 import streamlit as st
@@ -12,7 +12,6 @@ import logging
 import yaml
 import io
 import time
-import smtplib
 
 import streamlit_authenticator as stauth
 
@@ -20,23 +19,14 @@ from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
 import plotly.express as px
 
-from email.mime.text import MIMEText
-from twilio.rest import Client
-
 # =========================================
-# CONFIG
+# PAGE CONFIG
 # =========================================
 st.set_page_config(
     page_title="REDI Data Quality System",
@@ -47,18 +37,26 @@ st.set_page_config(
 APP_NAME = "REDI Data Quality Monitoring System"
 
 # =========================================
-# LOGGING
+# SAFE LOGGING (FALLBACK ALERT SYSTEM)
 # =========================================
 os.makedirs("logs", exist_ok=True)
 
 logging.basicConfig(
     filename="logs/redi.log",
-    level=logging.ERROR,
+    level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s"
 )
 
+def alert_system(message):
+    """
+    SAFE ALERT SYSTEM (NO EXTERNAL DEPENDENCIES)
+    Replaces WhatsApp/email to avoid failure in exams/demo
+    """
+    logging.info(f"ALERT: {message}")
+    st.warning(f"🚨 SYSTEM ALERT: {message}")
+
 # =========================================
-# AUTH
+# AUTHENTICATION SAFE LOAD
 # =========================================
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
@@ -73,7 +71,7 @@ authenticator = stauth.Authenticate(
 authenticator.login()
 
 if st.session_state.get("authentication_status") is False:
-    st.error("Incorrect login")
+    st.error("Incorrect username or password")
     st.stop()
 
 if st.session_state.get("authentication_status") is None:
@@ -89,54 +87,7 @@ st.sidebar.success(f"Welcome {name}")
 role = config["credentials"]["usernames"][username]["role"]
 
 # =========================================
-# ALERT RATE LIMIT
-# =========================================
-if "last_alert_time" not in st.session_state:
-    st.session_state.last_alert_time = 0
-
-# =========================================
-# ALERT FUNCTIONS
-# =========================================
-def send_whatsapp(message):
-
-    try:
-        client = Client(
-            st.secrets["TWILIO_SID"],
-            st.secrets["TWILIO_AUTH"]
-        )
-
-        client.messages.create(
-            body=message,
-            from_=st.secrets["TWILIO_WHATSAPP_FROM"],
-            to=st.secrets["TWILIO_WHATSAPP_TO"]
-        )
-
-    except Exception as e:
-        logging.error(str(e))
-
-
-def send_email(subject, body):
-
-    try:
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = st.secrets["EMAIL_USER"]
-        msg["To"] = st.secrets["EMAIL_TO"]
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(
-            st.secrets["EMAIL_USER"],
-            st.secrets["EMAIL_PASS"]
-        )
-        server.send_message(msg)
-        server.quit()
-
-    except Exception as e:
-        logging.error(str(e))
-
-# =========================================
-# DATA FETCH
+# DATA FETCH (SAFE)
 # =========================================
 @st.cache_data(ttl=120)
 def fetch_data(uid, token):
@@ -147,7 +98,7 @@ def fetch_data(uid, token):
     url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/?format=json&page_size=1000"
     headers = {"Authorization": f"Token {token}"} if token else {}
 
-    all_data = []
+    data_all = []
 
     try:
         while url:
@@ -158,14 +109,14 @@ def fetch_data(uid, token):
                 break
 
             js = r.json()
-            all_data.extend(js.get("results", []))
+            data_all.extend(js.get("results", []))
             url = js.get("next")
 
     except Exception as e:
         logging.error(str(e))
         return pd.DataFrame()
 
-    return pd.json_normalize(all_data)
+    return pd.json_normalize(data_all)
 
 # =========================================
 # SIDEBAR
@@ -173,17 +124,11 @@ def fetch_data(uid, token):
 st.sidebar.title("📊 REDI System")
 
 FORM_UID = st.sidebar.text_input("Kobo UID")
-
 KOBO_TOKEN = st.secrets.get("KOBO_TOKEN", None)
 
-# LIVE MODE
-live = st.sidebar.toggle("🔴 Live Mode", value=False)
-
-refresh_rate = st.sidebar.selectbox(
-    "Refresh (sec)",
-    [5, 10, 30],
-    index=1
-)
+# LIVE MODE (SAFE SIMULATION)
+live_mode = st.sidebar.toggle("🔴 Live Mode", value=False)
+refresh_rate = st.sidebar.selectbox("Refresh (sec)", [5, 10, 30], index=1)
 
 # =========================================
 # LOAD DATA
@@ -210,12 +155,12 @@ GENDER_COL = detect(["gender", "sex"])
 ENUM_COL = detect(["enum", "user"])
 
 # =========================================
-# FLAGS
+# QUALITY ENGINE INIT
 # =========================================
 df["reason"] = ""
 df["flag"] = False
 
-# Missing values
+# Missing values rule
 for col in df.columns:
     if any(k in col.lower() for k in ["name", "age", "gender"]):
 
@@ -227,12 +172,15 @@ for col in df.columns:
 # Age rule
 if AGE_COL:
     age = pd.to_numeric(df[AGE_COL], errors="coerce")
+
     mask = (age < 0) | (age > 120)
 
     df.loc[mask, "flag"] = True
     df.loc[mask, "reason"] += "Invalid age; "
 
-# AI anomaly
+# =========================================
+# AI ANOMALY DETECTION
+# =========================================
 num_cols = df.select_dtypes(include=["number"]).columns
 
 df["ai_flag"] = False
@@ -242,14 +190,16 @@ if len(num_cols) > 2:
     pred = model.fit_predict(df[num_cols].fillna(0))
     df["ai_flag"] = pred == -1
 
-# Final flag
+# =========================================
+# FINAL FLAGS
+# =========================================
 df["final_flag"] = df["flag"] | df["ai_flag"]
 
 clean_df = df[~df["final_flag"]]
 flag_df = df[df["final_flag"]]
 
 # =========================================
-# AI EXPLANATION
+# AI EXPLANATION (PER ROW)
 # =========================================
 def explain(row):
 
@@ -266,7 +216,7 @@ def explain(row):
 df["ai_explanation"] = df.apply(explain, axis=1)
 
 # =========================================
-# KPI
+# KPIs
 # =========================================
 total = len(df)
 valid = len(clean_df)
@@ -274,28 +224,20 @@ bad = len(flag_df)
 score = (valid / total * 100) if total else 0
 
 # =========================================
-# ALERT SYSTEM (SAFE)
+# SAFE ALERT SYSTEM (NO FAIL MODE)
 # =========================================
-now = time.time()
-
-if len(flag_df) > 0 and (now - st.session_state.last_alert_time > 300):
-
-    msg = f"REDI ALERT 🚨 {len(flag_df)} anomalies detected"
-
-    send_whatsapp(msg)
-    send_email("REDI Alert", msg)
-
-    st.session_state.last_alert_time = now
+if len(flag_df) > 0:
+    alert_system(f"{len(flag_df)} anomalies detected in dataset")
 
 # =========================================
-# LIVE MODE REFRESH
+# LIVE MODE SIMULATION
 # =========================================
-if live:
+if live_mode:
     time.sleep(refresh_rate)
     st.rerun()
 
 # =========================================
-# DASHBOARD
+# NAVIGATION
 # =========================================
 page = st.sidebar.radio("Navigation", [
     "Dashboard",
@@ -303,6 +245,9 @@ page = st.sidebar.radio("Navigation", [
     "Insights"
 ])
 
+# =========================================
+# DASHBOARD
+# =========================================
 if page == "Dashboard":
 
     st.title(APP_NAME)
@@ -314,6 +259,8 @@ if page == "Dashboard":
     c3.metric("Flagged", bad)
     c4.metric("Quality Score", f"{score:.2f}%")
 
+    st.subheader("Data Quality Overview")
+
     fig = px.bar(
         pd.DataFrame({"Type": ["Valid", "Flagged"], "Count": [valid, bad]}),
         x="Type",
@@ -322,6 +269,7 @@ if page == "Dashboard":
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # ENUMERATOR LEADERBOARD
     if ENUM_COL:
 
         leaderboard = df.groupby(ENUM_COL).agg(
@@ -329,7 +277,7 @@ if page == "Dashboard":
             flagged=("final_flag", "sum")
         ).reset_index()
 
-        leaderboard["score"] = (1 - leaderboard["flagged"]/leaderboard["total"]) * 100
+        leaderboard["score"] = (1 - leaderboard["flagged"] / leaderboard["total"]) * 100
 
         st.subheader("🏆 Enumerator Leaderboard")
         st.dataframe(leaderboard.sort_values("score", ascending=False))
@@ -341,7 +289,7 @@ elif page == "Explorer":
 
     st.title("Data Explorer")
 
-    tab1, tab2 = st.tabs(["Clean", "Flagged"])
+    tab1, tab2 = st.tabs(["Clean Data", "Flagged Data"])
 
     with tab1:
         st.dataframe(clean_df, use_container_width=True)
@@ -354,6 +302,11 @@ elif page == "Explorer":
 # =========================================
 elif page == "Insights":
 
-    st.title("Insights")
+    st.title("Key Insights")
 
     st.bar_chart(flag_df["reason"].value_counts().head(10))
+
+# =========================================
+# FOOTER
+# =========================================
+st.caption(f"{APP_NAME} | Generated at {datetime.now()}")
