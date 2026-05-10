@@ -3,17 +3,22 @@ credentials:
     admin:
       email: admin@redi.com
       name: Admin User
-      password: $2b$12$abc...   # ← paste here
+      password: 1234567890
       role: admin
 
     supervisor:
       email: sup@redi.com
       name: Supervisor User
-      password: $2b$12$def...
+      password: 1234567890
       role: supervisor
 
     enumerator:
       email: enum@redi.com
       name: Enumerator User
-      password: $2b$12$ghi...
+      password: 1234567890
       role: enumerator
+
+cookie:
+  name: redi_cookie
+  key: redi_secure_key
+  expiry_days: 1
