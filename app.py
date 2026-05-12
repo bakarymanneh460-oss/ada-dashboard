@@ -239,7 +239,7 @@ if DATE_COL and DATE_COL in df.columns:
         st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
-# SMART NUMERIC CONVERSION (CORRECT)
+# SAFE NUMERIC CONVERSION (FINAL FIX)
 # =========================================
 
 numeric_cols = [
@@ -252,11 +252,17 @@ numeric_cols = [
     "Number of phones"
 ]
 
-for col in df.columns:
-    if any(n.lower() in col.lower() for n in numeric_cols):
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+# normalize column names (VERY IMPORTANT)
+df.columns = df.columns.str.strip()
 
-df[numeric_cols] = df[numeric_cols].fillna(0)
+existing_numeric_cols = [c for c in numeric_cols if c in df.columns]
+
+for col in existing_numeric_cols:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+# only fill valid columns
+if existing_numeric_cols:
+    df[existing_numeric_cols] = df[existing_numeric_cols].fillna(0)
 
 # =========================================
 # ANOMALY
