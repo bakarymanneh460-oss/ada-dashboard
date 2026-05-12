@@ -173,14 +173,17 @@ def fetch(uid, token):
 # =========================================
 # DATE FILTER (FIXED — NO DATA LOSS)
 # =========================================
-def detect(names):
+def detect(df, names):
+    if df is None or df.empty:
+        return None
+
     for c in df.columns:
         for n in names:
             if n in c.lower():
                 return c
     return None
 
-DATE_COL = detect(["submission_time","date","time"])
+DATE_COL = detect(df, ["submission_time","date","time"])
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
