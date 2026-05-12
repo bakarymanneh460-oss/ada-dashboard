@@ -239,10 +239,12 @@ if DATE_COL and DATE_COL in df.columns:
         st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
-# FORCE NUMERIC CONVERSION
+# SAFE NUMERIC CONVERSION
 # =========================================
 for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors="ignore")
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df = df.fillna(0)
 
 # =========================================
 # ANOMALY
