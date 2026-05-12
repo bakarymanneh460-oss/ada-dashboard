@@ -165,6 +165,19 @@ def fetch(uid, token):
     return pd.DataFrame()
 
 # =========================================
+# DETECT DATE COLUMN FUNCTION
+# =========================================
+def detect(df, names):
+    if df is None or df.empty:
+        return None
+
+    for c in df.columns:
+        for n in names:
+            if n in c.lower():
+                return c
+    return None
+    
+# =========================================
 # CACHE CONTROL (MUST COME FIRST)
 # =========================================
 FORM_UID = FORM_UID.strip()
