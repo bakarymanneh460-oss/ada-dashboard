@@ -239,6 +239,12 @@ if DATE_COL and DATE_COL in df.columns:
         st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
+# FORCE NUMERIC CONVERSION
+# =========================================
+for col in df.columns:
+    df[col] = pd.to_numeric(df[col], errors="ignore")
+
+# =========================================
 # ANOMALY
 # =========================================
 num_cols = df.select_dtypes(include="number").columns
@@ -253,7 +259,7 @@ else:
 # AI
 # =========================================
 if len(num_cols)>2:
-    model = IsolationForest(contamination=0.02)
+    model = IsolationForest(contamination=0.2, random_state=42)
     df["ai_flag"] = model.fit_predict(df[num_cols].fillna(0))==-1
 else:
     df["ai_flag"] = False
@@ -271,16 +277,88 @@ for col in df.columns:
         df.loc[mask,"qualitative_issue"]+=f"Missing {col}; "
 
 # =========================================
+# RULE-BASED VALIDATION (STRONG)
+# =========================================
+df["rule_flag"] = False
+df["rule_reason"] = ""
+
+# AGE RULE
+if "Age" in df.columns:
+    mask = (df["Age"] < 0) | (df["Age"] > 120)
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Invalid age; "
+
+# MARITAL AGE RULE
+if "Age" in df.columns and "Marital Status" in df.columns:
+    mask = (df["Age"] < 18) & (df["Marital Status"].str.lower() == "married")
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Underage married; "
+
+# PHONE RULE
+if "Number of phones" in df.columns:
+    mask = df["Number of phones"] > 10
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Too many phones; "
+
+# INCOME RULE
+if "Monthly Income" in df.columns:
+    mask = df["Monthly Income"] > 1e8
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Extreme income; "
+validation_cols = [
+    "income_mismatch",
+    "age_mismatch",
+    "income_repeat_mismatch",
+    "phone_mismatch",
+    "education_mismatch",
+    "marital_age_issue"
+]
+
+existing = [c for c in validation_cols if c in df.columns]
+
+if existing:
+    df[existing] = df[existing].apply(pd.to_numeric, errors="coerce").fillna(0)
+    df["validation_flag"] = df[existing].sum(axis=1) > 0
+else:
+    df["validation_flag"] = False
+
+# =========================================
+# FORM VALIDATION FLAGS (ADD HERE - STEP 4)
+# =========================================
+validation_cols = [
+    "income_mismatch",
+    "age_mismatch",
+    "income_repeat_mismatch",
+    "phone_mismatch",
+    "education_mismatch",
+    "marital_age_issue"
+]
+
+existing = [c for c in validation_cols if c in df.columns]
+
+if existing:
+    df[existing] = df[existing].apply(pd.to_numeric, errors="coerce").fillna(0)
+    df["validation_flag"] = df[existing].sum(axis=1) > 0
+else:
+    df["validation_flag"] = False
+
+
+# =========================================
 # FINAL FLAG
 # =========================================
-df["final_flag"] = df["qualitative_flag"] | df["anomaly_flag"] | df["ai_flag"]
+df["final_flag"] = (
+    df["qualitative_flag"] |
+    df["anomaly_flag"] |
+    df["ai_flag"] |
+    df["rule_flag"] |
+    df["validation_flag"]
+)
 
 # =========================================
 # WHY FLAGGED (MULTI-UID SAFE)
 # =========================================
 
 def safe_str(x):
-    """Ensure safe string conversion"""
     if pd.isna(x):
         return ""
     return str(x)
@@ -304,6 +382,14 @@ def explain_row(row):
     if bool(row.get("ai_flag", False)):
         reasons.append("AI anomaly")
 
+    # --- RULE ---
+    if bool(row.get("rule_flag", False)):
+        reasons.append(safe_str(row.get("rule_reason", "")))
+
+    # --- VALIDATION ---
+    if bool(row.get("validation_flag", False)):
+        reasons.append("Form validation mismatch")
+
     # --- FINAL ---
     if not reasons:
         return "No issues"
@@ -311,7 +397,7 @@ def explain_row(row):
     return " | ".join(reasons)
 
 
-# ✅ GUARANTEED 1 COLUMN OUTPUT
+# ✅ APPLY
 df["why_flagged"] = df.apply(explain_row, axis=1)
 
 # =========================================
