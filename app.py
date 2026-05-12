@@ -197,7 +197,6 @@ if FORM_UID != st.session_state.last_uid:
     st.cache_data.clear()   # 🔥 clear old cached data
     st.session_state.last_uid = FORM_UID
 
-
 # =========================================
 # FETCH (ONLY CALL ONCE)
 # =========================================
@@ -213,7 +212,11 @@ if df is None or df.empty:
 # =========================================
 # CLEAN COLUMN NAMES
 # =========================================
-df.columns = df.columns.str.strip()
+df.columns = (
+    df.columns
+    .str.strip()
+    .str.replace("\n", "", regex=False)
+)
 
 # =========================================
 # DATE FILTER (SAFE — NEVER ZERO OUT DATA)
