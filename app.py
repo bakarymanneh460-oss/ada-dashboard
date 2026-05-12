@@ -208,14 +208,44 @@ for col in df.columns:
 # =========================================
 df["final_flag"] = df["qualitative_flag"] | df["anomaly_flag"] | df["ai_flag"]
 
-# WHY FLAGGED
-df["why_flagged"] = df.apply(
-    lambda r: " | ".join(filter(None,[
-        r["qualitative_issue"] if r["qualitative_flag"] else "",
-        "Stat anomaly" if r["anomaly_flag"] else "",
-        "AI anomaly" if r["ai_flag"] else ""
-    ])) or "No issues", axis=1
-)
+# =========================================
+# WHY FLAGGED (MULTI-UID SAFE)
+# =========================================
+
+def safe_str(x):
+    """Ensure safe string conversion"""
+    if pd.isna(x):
+        return ""
+    return str(x)
+
+def explain_row(row):
+    reasons = []
+
+    # --- QUALITATIVE ---
+    if bool(row.get("qualitative_flag", False)):
+        q_issue = safe_str(row.get("qualitative_issue", "")).strip()
+        if q_issue:
+            reasons.append(q_issue)
+        else:
+            reasons.append("Qualitative issue")
+
+    # --- STATISTICAL ---
+    if bool(row.get("anomaly_flag", False)):
+        reasons.append("Stat anomaly")
+
+    # --- AI ---
+    if bool(row.get("ai_flag", False)):
+        reasons.append("AI anomaly")
+
+    # --- FINAL ---
+    if not reasons:
+        return "No issues"
+
+    return " | ".join(reasons)
+
+
+# ✅ GUARANTEED 1 COLUMN OUTPUT
+df["why_flagged"] = df.apply(explain_row, axis=1)
 
 # =========================================
 # SPLIT
