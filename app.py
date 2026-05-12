@@ -164,15 +164,6 @@ def fetch(uid, token):
     return pd.DataFrame()
 
 # =========================================
-# CLEAN COLUMN NAMES
-# =========================================
-df.columns = (
-    df.columns
-    .str.strip()
-    .str.replace("\n", "", regex=False)
-)
-
-# =========================================
 # DETECT DATE COLUMN FUNCTION
 # =========================================
 def detect(df, names):
