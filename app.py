@@ -187,38 +187,43 @@ if df is None or df.empty:
     st.stop()
 
 # =========================================
-# DATE FILTER (FIXED — NO DATA LOSS)
+# DATE FILTER (SAFE — NEVER ZERO OUT DATA)
 # =========================================
-def detect(df, names):
-    if df is None or df.empty:
-        return None
-
-    for c in df.columns:
-        for n in names:
-            if n in c.lower():
-                return c
-    return None
-
-DATE_COL = detect(df, ["submission_time","date","time"])
+DATE_COL = detect(df, ["submission_time", "date", "time"])
 if "_submission_time" in df.columns:
     DATE_COL = "_submission_time"
 
-if DATE_COL:
+if DATE_COL and DATE_COL in df.columns:
+
     df[DATE_COL] = pd.to_datetime(df[DATE_COL], errors="coerce")
 
-    st.sidebar.subheader("Filters")
-    c1, c2 = st.sidebar.columns(2)
+    # Use only valid dates to build the picker
+    valid_dates = df[DATE_COL].dropna()
 
-    start = c1.date_input("Start", df[DATE_COL].min())
-    end = c2.date_input("End", df[DATE_COL].max())
+    if len(valid_dates) > 0:
+        st.sidebar.subheader("Filters")
 
-    mask = (
-        (df[DATE_COL] >= pd.to_datetime(start)) &
-        (df[DATE_COL] <= pd.to_datetime(end))
-    )
+        min_date = valid_dates.min()
+        max_date = valid_dates.max()
 
-    # ✅ KEY FIX: keep missing dates
-    df = df[mask | df[DATE_COL].isna()]
+        c1, c2 = st.sidebar.columns(2)
+        start = c1.date_input("Start", min_date)
+        end = c2.date_input("End", max_date)
+
+        mask = (
+            (df[DATE_COL] >= pd.to_datetime(start)) &
+            (df[DATE_COL] <= pd.to_datetime(end))
+        )
+
+        filtered = df[mask]
+
+        # 🔴 Only apply if it keeps data
+        if len(filtered) > 0:
+            df = filtered
+        else:
+            st.warning("Date filter removed all data — ignoring filter")
+    else:
+        st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
 # ANOMALY
