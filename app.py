@@ -165,6 +165,15 @@ def fetch(uid, token):
     return pd.DataFrame()
 
 # =========================================
+# CLEAN COLUMN NAMES
+# =========================================
+df.columns = (
+    df.columns
+    .str.strip()
+    .str.replace("\n", "", regex=False)
+)
+
+# =========================================
 # DETECT DATE COLUMN FUNCTION
 # =========================================
 def detect(df, names):
@@ -320,51 +329,54 @@ else:
     df["validation_flag"] = False
 
 # =========================================
-# RULE + VALIDATION ENGINE
+# RULE ENGINE
 # =========================================
 
 df["rule_flag"] = False
 df["rule_reason"] = ""
 
-# -------------------------
-# AGE RULE
-# -------------------------
-if "Age" in df.columns:
-    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
+# normalize key columns safely
+def get_col(possible_names):
+    for c in df.columns:
+        if any(name.lower() in c.lower() for name in possible_names):
+            return c
+    return None
 
-    mask = df["Age"].notna() & ((df["Age"] < 0) | (df["Age"] > 120))
+
+age_col = get_col(["age"])
+marital_col = get_col(["marital"])
+phone_col = get_col(["phone"])
+income_col = get_col(["income"])
+
+
+# AGE RULE
+if age_col:
+    df[age_col] = pd.to_numeric(df[age_col], errors="coerce")
+    mask = df[age_col].between(0, 120) == False
     df.loc[mask, "rule_flag"] = True
     df.loc[mask, "rule_reason"] += "Invalid age; "
 
-# -------------------------
 # MARITAL AGE RULE
-# -------------------------
-if "Age" in df.columns and "Marital Status" in df.columns:
+if age_col and marital_col:
     mask = (
-        df["Age"].notna() &
-        (df["Age"] < 18) &
-        (df["Marital Status"].astype(str).str.lower() == "married")
+        df[age_col] < 18
+    ) & (
+        df[marital_col].astype(str).str.lower().str.contains("married")
     )
     df.loc[mask, "rule_flag"] = True
     df.loc[mask, "rule_reason"] += "Underage married; "
 
-# -------------------------
 # PHONE RULE
-# -------------------------
-if "Number of phones" in df.columns:
-    df["Number of phones"] = pd.to_numeric(df["Number of phones"], errors="coerce")
-
-    mask = df["Number of phones"].notna() & (df["Number of phones"] > 10)
+if phone_col:
+    df[phone_col] = pd.to_numeric(df[phone_col], errors="coerce")
+    mask = df[phone_col] > 10
     df.loc[mask, "rule_flag"] = True
     df.loc[mask, "rule_reason"] += "Too many phones; "
 
-# -------------------------
 # INCOME RULE
-# -------------------------
-if "Monthly Income" in df.columns:
-    df["Monthly Income"] = pd.to_numeric(df["Monthly Income"], errors="coerce")
-
-    mask = df["Monthly Income"].notna() & (df["Monthly Income"] > 1e8)
+if income_col:
+    df[income_col] = pd.to_numeric(df[income_col], errors="coerce")
+    mask = df[income_col] > 1e8
     df.loc[mask, "rule_flag"] = True
     df.loc[mask, "rule_reason"] += "Extreme income; "
 
@@ -394,7 +406,7 @@ else:
     df["validation_flag"] = False
     df["validation_score"] = 0
 # =========================================
-# FORM VALIDATION FLAGS (ADD HERE - STEP 4)
+# FORM VALIDATION FLAGS
 # =========================================
 validation_cols = [
     "income_mismatch",
