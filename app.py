@@ -1,6 +1,5 @@
 # =========================================
 # REDI AUTOMATED DATA QUALITY MONITORING SYSTEM
-# TRUE FINAL VERSION (STABLE)
 # =========================================
 
 import streamlit as st
@@ -204,9 +203,17 @@ if FORM_UID != st.session_state.last_uid:
 # =========================================
 df = fetch(FORM_UID, KOBO_TOKEN)
 
+# =========================================
+# SAFETY CHECK
+# =========================================
 if df is None or df.empty:
     st.warning("No data found")
     st.stop()
+
+# =========================================
+# CLEAN COLUMN NAMES
+# =========================================
+df.columns = df.columns.str.strip()
 
 # =========================================
 # DATE FILTER (SAFE — NEVER ZERO OUT DATA)
