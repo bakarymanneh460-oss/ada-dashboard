@@ -115,11 +115,6 @@ page = st.sidebar.radio("Navigation", pages)
 # =========================================
 # FETCH (FULL PAGINATION)
 # =========================================
-df = fetch(FORM_UID, KOBO_TOKEN)
-
-if df is None or df.empty:
-    st.warning("No data found")
-    st.stop()
 @st.cache_data(ttl=60)
 def fetch(uid, token):
 
@@ -128,8 +123,8 @@ def fetch(uid, token):
         return pd.DataFrame()
 
     servers = [
-        "https://kf.kobotoolbox.org",  # standard
-        "https://kc.kobotoolbox.org"   # humanitarian
+        "https://kf.kobotoolbox.org",
+        "https://kc.kobotoolbox.org"
     ]
 
     headers = {"Authorization": f"Token {token}"}
@@ -140,12 +135,10 @@ def fetch(uid, token):
             params = {"format": "json", "page_size": 1000}
 
             all_data = []
-            page_count = 0
 
             while url:
                 r = requests.get(url, headers=headers, params=params, timeout=30)
 
-                # 🔴 If server rejects → try next server
                 if r.status_code in [401, 403, 404]:
                     break
 
@@ -154,15 +147,12 @@ def fetch(uid, token):
                     break
 
                 data = r.json()
-
                 results = data.get("results", [])
                 all_data.extend(results)
 
                 url = data.get("next")
                 params = None
-                page_count += 1
 
-            # ✅ SUCCESS CONDITION
             if len(all_data) > 0:
                 st.success(f"Fetched {len(all_data)} records from {base}")
                 return pd.json_normalize(all_data)
@@ -171,9 +161,18 @@ def fetch(uid, token):
             st.warning(f"{base} failed: {e}")
             continue
 
-    # ❌ FINAL FAIL
     st.error("No data fetched. Possible reasons: wrong UID, no permission, or wrong server.")
     return pd.DataFrame()
+
+
+# =========================================
+# NOW CALL FETCH (AFTER DEFINITION)
+# =========================================
+df = fetch(FORM_UID, KOBO_TOKEN)
+
+if df is None or df.empty:
+    st.warning("No data found")
+    st.stop()
 
 # =========================================
 # DATE FILTER (FIXED — NO DATA LOSS)
