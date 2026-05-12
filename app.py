@@ -31,7 +31,6 @@ st.set_page_config(
     page_icon="📊"
 )
 
-# ✅ FIXED (this was missing before)
 APP_NAME = "REDI Automated Data Quality Monitoring System"
 
 # =========================================
@@ -153,7 +152,6 @@ def fetch(uid, token):
                 params = None
 
             if len(all_data) > 0:
-                st.success(f"Fetched {len(all_data)} records from {base}")
                 return pd.json_normalize(all_data)
 
         except Exception as e:
@@ -243,8 +241,6 @@ if DATE_COL and DATE_COL in df.columns:
         # 🔴 Only apply if it keeps data
         if len(filtered) > 0:
             df = filtered
-        else:
-            st.warning("Date filter removed all data — ignoring filter")
     else:
         st.warning("No valid dates in this dataset — skipping date filter")
 
