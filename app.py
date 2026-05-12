@@ -405,36 +405,16 @@ if existing:
 else:
     df["validation_flag"] = False
     df["validation_score"] = 0
-# =========================================
-# FORM VALIDATION FLAGS
-# =========================================
-validation_cols = [
-    "income_mismatch",
-    "age_mismatch",
-    "income_repeat_mismatch",
-    "phone_mismatch",
-    "education_mismatch",
-    "marital_age_issue"
-]
-
-existing = [c for c in validation_cols if c in df.columns]
-
-if existing:
-    df[existing] = df[existing].apply(pd.to_numeric, errors="coerce").fillna(0)
-    df["validation_flag"] = df[existing].sum(axis=1) > 0
-else:
-    df["validation_flag"] = False
-
 
 # =========================================
 # FINAL FLAG
 # =========================================
 df["final_flag"] = (
-    df["qualitative_flag"] |
-    df["anomaly_flag"] |
-    df["ai_flag"] |
-    df["rule_flag"] |
-    df["validation_flag"]
+    df["qualitative_flag"].fillna(False) |
+    df["anomaly_flag"].fillna(False) |
+    df["ai_flag"].fillna(False) |
+    df["rule_flag"].fillna(False) |
+    df["validation_flag"].fillna(False)
 )
 
 # =========================================
