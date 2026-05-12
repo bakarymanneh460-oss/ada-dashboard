@@ -164,9 +164,21 @@ def fetch(uid, token):
     st.error("No data fetched. Possible reasons: wrong UID, no permission, or wrong server.")
     return pd.DataFrame()
 
+# =========================================
+# CACHE CONTROL (MUST COME FIRST)
+# =========================================
+FORM_UID = FORM_UID.strip()
+
+if "last_uid" not in st.session_state:
+    st.session_state.last_uid = None
+
+if FORM_UID != st.session_state.last_uid:
+    st.cache_data.clear()   # 🔥 clear old cached data
+    st.session_state.last_uid = FORM_UID
+
 
 # =========================================
-# NOW CALL FETCH (AFTER DEFINITION)
+# FETCH (ONLY CALL ONCE)
 # =========================================
 df = fetch(FORM_UID, KOBO_TOKEN)
 
