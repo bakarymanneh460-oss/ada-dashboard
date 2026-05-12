@@ -239,7 +239,7 @@ if DATE_COL and DATE_COL in df.columns:
         st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
-# SAFE NUMERIC CONVERSION (FINAL FIX)
+# SAFE NUMERIC CONVERSION
 # =========================================
 
 numeric_cols = [
@@ -297,34 +297,9 @@ for col in df.columns:
         df.loc[mask,"qualitative_issue"]+=f"Missing {col}; "
 
 # =========================================
-# RULE-BASED VALIDATION (STRONG)
+# VALIDATION
 # =========================================
-df["rule_flag"] = False
-df["rule_reason"] = ""
 
-# AGE RULE
-if "Age" in df.columns:
-    mask = (df["Age"] < 0) | (df["Age"] > 120)
-    df.loc[mask, "rule_flag"] = True
-    df.loc[mask, "rule_reason"] += "Invalid age; "
-
-# MARITAL AGE RULE
-if "Age" in df.columns and "Marital Status" in df.columns:
-    mask = (df["Age"] < 18) & (df["Marital Status"].str.lower() == "married")
-    df.loc[mask, "rule_flag"] = True
-    df.loc[mask, "rule_reason"] += "Underage married; "
-
-# PHONE RULE
-if "Number of phones" in df.columns:
-    mask = df["Number of phones"] > 10
-    df.loc[mask, "rule_flag"] = True
-    df.loc[mask, "rule_reason"] += "Too many phones; "
-
-# INCOME RULE
-if "Monthly Income" in df.columns:
-    mask = df["Monthly Income"] > 1e8
-    df.loc[mask, "rule_flag"] = True
-    df.loc[mask, "rule_reason"] += "Extreme income; "
 validation_cols = [
     "income_mismatch",
     "age_mismatch",
@@ -338,10 +313,86 @@ existing = [c for c in validation_cols if c in df.columns]
 
 if existing:
     df[existing] = df[existing].apply(pd.to_numeric, errors="coerce").fillna(0)
-    df["validation_flag"] = df[existing].sum(axis=1) > 0
+
+    # 🔥 IMPORTANT FIX (NOT binary anymore)
+    df["validation_flag"] = df[existing].sum(axis=1) >= 2
 else:
     df["validation_flag"] = False
 
+# =========================================
+# RULE + VALIDATION ENGINE
+# =========================================
+
+df["rule_flag"] = False
+df["rule_reason"] = ""
+
+# -------------------------
+# AGE RULE
+# -------------------------
+if "Age" in df.columns:
+    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
+
+    mask = df["Age"].notna() & ((df["Age"] < 0) | (df["Age"] > 120))
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Invalid age; "
+
+# -------------------------
+# MARITAL AGE RULE
+# -------------------------
+if "Age" in df.columns and "Marital Status" in df.columns:
+    mask = (
+        df["Age"].notna() &
+        (df["Age"] < 18) &
+        (df["Marital Status"].astype(str).str.lower() == "married")
+    )
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Underage married; "
+
+# -------------------------
+# PHONE RULE
+# -------------------------
+if "Number of phones" in df.columns:
+    df["Number of phones"] = pd.to_numeric(df["Number of phones"], errors="coerce")
+
+    mask = df["Number of phones"].notna() & (df["Number of phones"] > 10)
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Too many phones; "
+
+# -------------------------
+# INCOME RULE
+# -------------------------
+if "Monthly Income" in df.columns:
+    df["Monthly Income"] = pd.to_numeric(df["Monthly Income"], errors="coerce")
+
+    mask = df["Monthly Income"].notna() & (df["Monthly Income"] > 1e8)
+    df.loc[mask, "rule_flag"] = True
+    df.loc[mask, "rule_reason"] += "Extreme income; "
+
+# =========================================
+# VALIDATION ENGINE
+# =========================================
+
+validation_cols = [
+    "income_mismatch",
+    "age_mismatch",
+    "income_repeat_mismatch",
+    "phone_mismatch",
+    "education_mismatch",
+    "marital_age_issue"
+]
+
+existing = [c for c in validation_cols if c in df.columns]
+
+if existing:
+    df[existing] = df[existing].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+    # weighted logic (prevents over-flagging)
+    df["validation_score"] = df[existing].sum(axis=1)
+
+    df["validation_flag"] = df["validation_score"] >= 2
+else:
+    df["validation_flag"] = False
+    df["validation_score"] = 0
 # =========================================
 # FORM VALIDATION FLAGS (ADD HERE - STEP 4)
 # =========================================
