@@ -117,28 +117,58 @@ page = st.sidebar.radio("Navigation", pages)
 # =========================================
 @st.cache_data(ttl=60)
 def fetch(uid, token):
+
     if not uid:
+        st.warning("UID is empty")
         return pd.DataFrame()
 
+    servers = [
+        "https://kf.kobotoolbox.org",  # standard
+        "https://kc.kobotoolbox.org"   # humanitarian
+    ]
+
     headers = {"Authorization": f"Token {token}"}
-    url = f"https://kf.kobotoolbox.org/api/v2/assets/{uid}/data/"
-    params = {"format":"json","page_size":1000}
 
-    all_data = []
-    while url:
-        r = requests.get(url, headers=headers, params=params)
-        data = r.json()
-        all_data.extend(data.get("results", []))
-        url = data.get("next")
-        params = None
+    for base in servers:
+        try:
+            url = f"{base}/api/v2/assets/{uid}/data/"
+            params = {"format": "json", "page_size": 1000}
 
-    return pd.json_normalize(all_data)
+            all_data = []
+            page_count = 0
 
-df = fetch(FORM_UID, KOBO_TOKEN)
+            while url:
+                r = requests.get(url, headers=headers, params=params, timeout=30)
 
-if df.empty:
-    st.warning("No data found")
-    st.stop()
+                # 🔴 If server rejects → try next server
+                if r.status_code in [401, 403, 404]:
+                    break
+
+                if r.status_code != 200:
+                    st.warning(f"{base} error: {r.status_code}")
+                    break
+
+                data = r.json()
+
+                results = data.get("results", [])
+                all_data.extend(results)
+
+                url = data.get("next")
+                params = None
+                page_count += 1
+
+            # ✅ SUCCESS CONDITION
+            if len(all_data) > 0:
+                st.success(f"Fetched {len(all_data)} records from {base}")
+                return pd.json_normalize(all_data)
+
+        except Exception as e:
+            st.warning(f"{base} failed: {e}")
+            continue
+
+    # ❌ FINAL FAIL
+    st.error("No data fetched. Possible reasons: wrong UID, no permission, or wrong server.")
+    return pd.DataFrame()
 
 # =========================================
 # DATE FILTER (FIXED — NO DATA LOSS)
