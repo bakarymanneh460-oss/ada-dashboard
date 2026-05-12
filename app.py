@@ -239,12 +239,24 @@ if DATE_COL and DATE_COL in df.columns:
         st.warning("No valid dates in this dataset — skipping date filter")
 
 # =========================================
-# SAFE NUMERIC CONVERSION
+# SMART NUMERIC CONVERSION (CORRECT)
 # =========================================
-for col in df.columns:
-    df[col] = pd.to_numeric(df[col], errors="coerce")
 
-df = df.fillna(0)
+numeric_cols = [
+    "Age",
+    "Household Size",
+    "Monthly Income",
+    "Secondary Income",
+    "Total Household Income",
+    "Monthly Health Expenditure",
+    "Number of phones"
+]
+
+for col in df.columns:
+    if any(n.lower() in col.lower() for n in numeric_cols):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df[numeric_cols] = df[numeric_cols].fillna(0)
 
 # =========================================
 # ANOMALY
