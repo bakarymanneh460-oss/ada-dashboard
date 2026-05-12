@@ -115,6 +115,11 @@ page = st.sidebar.radio("Navigation", pages)
 # =========================================
 # FETCH (FULL PAGINATION)
 # =========================================
+df = fetch(FORM_UID, KOBO_TOKEN)
+
+if df is None or df.empty:
+    st.warning("No data found")
+    st.stop()
 @st.cache_data(ttl=60)
 def fetch(uid, token):
 
