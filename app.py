@@ -9,10 +9,8 @@ import requests
 import numpy as np
 import os
 import logging
-import yaml
-import streamlit_authenticator as stauth
+from supabase import create_client
 
-from yaml.loader import SafeLoader
 from datetime import datetime
 from sklearn.ensemble import IsolationForest
 
@@ -56,37 +54,90 @@ section[data-testid="stSidebar"] .stDateInput input {color:black !important;}
 """, unsafe_allow_html=True)
 
 # =========================================
-# AUTH
+# SUPABASE AUTH
 # =========================================
-with open("config.yaml") as file:
-    config = yaml.load(file, Loader=SafeLoader)
 
-authenticator = stauth.Authenticate(
-    config["credentials"],
-    config["cookie"]["name"],
-    config["cookie"]["key"],
-    config["cookie"]["expiry_days"]
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+
+supabase = create_client(url, key)
+
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+menu = st.sidebar.selectbox(
+    "Account",
+    ["Login", "Sign Up"]
 )
 
-authenticator.login()
+# -----------------------------
+# NOT LOGGED IN
+# -----------------------------
+if st.session_state.user is None:
 
-auth = st.session_state.get("authentication_status")
-username = st.session_state.get("username")
-name = st.session_state.get("name")
+    if menu == "Sign Up":
 
-if auth is False:
-    st.error("Incorrect username or password")
+        st.title("Create Account")
+
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Create Account"):
+
+            try:
+
+                supabase.auth.sign_up({
+                    "email": email,
+                    "password": password
+                })
+
+                st.success(
+                    "Account created successfully. Check your email."
+                )
+
+            except Exception as e:
+                st.error(str(e))
+
+    elif menu == "Login":
+
+        st.title("Login")
+
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+
+            try:
+
+                response = supabase.auth.sign_in_with_password({
+                    "email": email,
+                    "password": password
+                })
+
+                st.session_state.user = response.user
+
+                st.success("Login successful")
+
+                st.rerun()
+
+            except Exception as e:
+                st.error(str(e))
+
     st.stop()
 
-if auth is None:
-    st.warning("Please login")
-    st.stop()
+# -----------------------------
+# LOGGED IN
+# -----------------------------
+st.sidebar.success(
+    f"Logged in as {st.session_state.user.email}"
+)
 
-authenticator.logout("Logout", "sidebar")
+if st.sidebar.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
 
-st.sidebar.success(f"Welcome {name}")
-role = config["credentials"]["usernames"][username]["role"]
-st.sidebar.info(f"Role: {role}")
+# DEFAULT ROLE
+role = "admin"
 
 # =========================================
 # KOBO TOKEN
