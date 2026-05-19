@@ -5,6 +5,6 @@ requests
 plotly
 scikit-learn
 reportlab
-pyyaml
-streamlit-authenticator
 openpyxl
+supabase
+bcrypt
