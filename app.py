@@ -61,20 +61,13 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 
 supabase = create_client(url, key)
-st.write("Supabase URL:", url)
-
-try:
-    test = supabase.auth.get_session()
-    st.success("Supabase connection initialized")
-except Exception as e:
-    st.error(f"Supabase error: {e}")
 
 if "user" not in st.session_state:
     st.session_state.user = None
 
 menu = st.sidebar.selectbox(
     "Account",
-    ["Login", "Sign Up"]
+    ["Login", "Sign Up", "Forgot Password"]
 )
 
 # -----------------------------
@@ -105,32 +98,60 @@ if st.session_state.user is None:
             except Exception as e:
                 st.error(str(e))
 
-    elif menu == "Login":
+elif menu == "Login":
 
-        st.title("Login")
+    st.title("Login")
 
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
 
-        if st.button("Login"):
+    if st.button("Login"):
 
-            try:
+        try:
 
-                response = supabase.auth.sign_in_with_password({
-                    "email": email,
-                    "password": password
-                })
+            response = supabase.auth.sign_in_with_password({
+                "email": email,
+                "password": password
+            })
 
-                st.session_state.user = response.user
+            st.session_state.user = response.user
 
-                st.success("Login successful")
+            st.success("Login successful")
 
-                st.rerun()
+            st.rerun()
 
-            except Exception as e:
-                st.error(str(e))
+        except Exception as e:
+            st.error(str(e))
 
-    st.stop()
+elif menu == "Forgot Password":
+
+    st.title("Reset Password")
+
+    email = st.text_input(
+        "Enter your registered email",
+        key="reset_email"
+    )
+
+    if st.button("Send Reset Link"):
+
+        try:
+
+            supabase.auth.reset_password_email(
+                email.strip(),
+                {
+                    "redirect_to":
+                    "https://ada-dashboard-f4pdektc4ifmnapm9dk6qq.streamlit.app"
+                }
+            )
+
+            st.success(
+                "Password reset email sent. Check your inbox."
+            )
+
+        except Exception as e:
+            st.error(str(e))
+
+st.stop()
 
 # -----------------------------
 # LOGGED IN
