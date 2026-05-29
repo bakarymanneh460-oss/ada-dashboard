@@ -61,6 +61,13 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 
 supabase = create_client(url, key)
+st.write("Supabase URL:", url)
+
+try:
+    test = supabase.auth.get_session()
+    st.success("Supabase connection initialized")
+except Exception as e:
+    st.error(f"Supabase error: {e}")
 
 if "user" not in st.session_state:
     st.session_state.user = None
